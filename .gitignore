@@ -1,30 +1,86 @@
-# Python
+# =========================
+# Python cache
+# =========================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.cpython-*.pyc
+
+# =========================
+# Virtual environments
+# =========================
 .venv/
 venv/
+env/
+ENV/
 
-# Env
+# =========================
+# Environment / secrets
+# =========================
 .env
 .env.*
+!.env.example
 
+# =========================
 # Phoenix generated files
+# =========================
 data/
 models/
 reports/
 
-# Model/cache artifacts
+# 단, 폴더 구조만 남기고 싶으면 .gitkeep 허용
+!data/.gitkeep
+!models/.gitkeep
+!reports/.gitkeep
+
+# =========================
+# Model / cache artifacts
+# =========================
 *.pkl
+*.pickle
 *.joblib
 *.parquet
 *.feather
 *.h5
+*.npy
+*.npz
 
-# Large output files
-*.csv
-*.xlsx
-*.html
+# =========================
+# Runtime / logs
+# =========================
+*.log
+logs/
+*.pid
+*.lock
 
-# IDE
+# =========================
+# Database / local storage
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Reports / large generated outputs
+# =========================
+reports/**/*.csv
+reports/**/*.xlsx
+reports/**/*.html
+benchmark_report*/
+benchmark_train_test*/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# IDE / OS
+# =========================
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

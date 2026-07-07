@@ -1,12 +1,7 @@
-"""
-phoenix_core/services/telegram_message_formatter.py
-"""
-
 from __future__ import annotations
 
 import re
 from datetime import datetime
-
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -15,7 +10,6 @@ def clean_cli_output(text: str) -> str:
     text = ANSI_RE.sub("", text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in text.split("\n")]
-
     compact: list[str] = []
     blank = False
     for line in lines:
@@ -26,7 +20,6 @@ def clean_cli_output(text: str) -> str:
         else:
             compact.append(line)
             blank = False
-
     return "\n".join(compact).strip()
 
 
@@ -34,7 +27,6 @@ def compact_cli_output(text: str, *, max_chars: int = 3300) -> str:
     text = clean_cli_output(text)
     if len(text) <= max_chars:
         return text
-
     head = text[:900].rstrip()
     tail = text[-(max_chars - 1100):].lstrip()
     return f"{head}\n\n...\n[중간 출력 생략]\n...\n\n{tail}"
