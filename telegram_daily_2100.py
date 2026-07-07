@@ -1,112 +1,57 @@
-"""
-telegram_daily_2100.py
-v0.3: single bot mode or TELEGRAM_BOTS multi-bot mode.
-"""
 from __future__ import annotations
-
-import argparse
-import os
-import subprocess
-import sys
-import time
+import argparse, os, subprocess, sys, time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-
+from phoenix_core.engines.intraday_context_engine import IntradayContextEngine
+from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_overlay
 from phoenix_core.services.telegram_message_formatter import compact_cli_output, disclaimer, header
 from phoenix_core.services.telegram_sender import TelegramSender, load_env_file, parse_chat_ids, send_long_message_with_token
 from phoenix_core.services.telegram_command_bot import _parse_bot_profiles
+KST=ZoneInfo('Asia/Seoul')
 
-KST = ZoneInfo("Asia/Seoul")
-
-
-def _daily_single_targets() -> list[str]:
-    return (
-        parse_chat_ids(os.getenv("TELEGRAM_DAILY_CHAT_IDS"))
-        or parse_chat_ids(os.getenv("TELEGRAM_CHAT_IDS"))
-        or parse_chat_ids(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS"))
-        or ([os.getenv("TELEGRAM_CHAT_ID")] if os.getenv("TELEGRAM_CHAT_ID") else [])
-    )
-
-
-def _send_daily_message(text: str) -> None:
-    if os.getenv("TELEGRAM_BOTS", "").strip():
-        profiles = _parse_bot_profiles()
-        for p in profiles:
-            for chat_id in p.allowed_chat_ids:
-                send_long_message_with_token(p.token, chat_id, text)
-        return
-    sender = TelegramSender()
-    sender.broadcast_message(text, chat_ids=_daily_single_targets())
-
-
-def run_daily_once() -> None:
-    load_env_file(".env")
-    project_dir = Path(os.getenv("PHOENIX_PROJECT_DIR", ".")).resolve()
-    python_exe = os.getenv("PHOENIX_PYTHON", sys.executable)
-    timeout_sec = int(os.getenv("PHOENIX_DAILY_TIMEOUT", os.getenv("PHOENIX_COMMAND_TIMEOUT", "420")))
-    top_n = int(os.getenv("PHOENIX_DAILY_TOP_N", os.getenv("PHOENIX_TOP_N", "10")))
-    refresh = os.getenv("PHOENIX_DAILY_REFRESH", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-    cmd = [python_exe, "main.py", "--top", "--top-n", str(top_n)]
-    if refresh:
-        cmd.append("--refresh")
-
-    _send_daily_message(f"{header(f'21:00 Daily Top {top_n} 실행 시작')}\n\n분석 중입니다...")
-
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        cmd,
-        cwd=str(project_dir),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_sec,
-        env=env,
-        shell=False,
-    )
-    output = ""
-    if proc.stdout:
-        output += proc.stdout
-    if proc.stderr:
-        output += "\n[stderr]\n" + proc.stderr
-    output = compact_cli_output(output, max_chars=3300)
-    title = f"21:00 Daily Top {top_n}"
-    if proc.returncode != 0:
-        msg = f"{header(title)}\n\n⚠️ Phoenix 실행 실패 code={proc.returncode}\n\n{output}\n\n{disclaimer()}"
+def _env_bool(k,default):
+    raw=os.getenv(k)
+    return default if raw is None else raw.strip().lower() in {'1','true','yes','y','on'}
+def _targets():
+    return parse_chat_ids(os.getenv('TELEGRAM_DAILY_CHAT_IDS')) or parse_chat_ids(os.getenv('TELEGRAM_CHAT_IDS')) or parse_chat_ids(os.getenv('TELEGRAM_ALLOWED_CHAT_IDS')) or ([os.getenv('TELEGRAM_CHAT_ID')] if os.getenv('TELEGRAM_CHAT_ID') else [])
+def _send(text):
+    if os.getenv('TELEGRAM_BOTS','').strip():
+        for p in _parse_bot_profiles():
+            for cid in p.allowed_chat_ids: send_long_message_with_token(p.token,cid,text)
     else:
-        msg = f"{header(title)}\n\n{output}\n\n{disclaimer()}"
-    _send_daily_message(msg)
-
-
-def run_loop() -> None:
-    last_sent_date: str | None = None
-    print("Daily 21:00 KST scheduler started. Ctrl+C to stop.")
+        TelegramSender().broadcast_message(text,chat_ids=_targets())
+def run_daily_once():
+    load_env_file('.env')
+    project_dir=Path(os.getenv('PHOENIX_PROJECT_DIR','.')).resolve(); py=os.getenv('PHOENIX_PYTHON',sys.executable)
+    timeout=int(os.getenv('PHOENIX_DAILY_TIMEOUT',os.getenv('PHOENIX_COMMAND_TIMEOUT','600')))
+    top_n=int(os.getenv('PHOENIX_DAILY_TOP_N',os.getenv('PHOENIX_TOP_N','5'))); scan_n=int(os.getenv('PHOENIX_DAILY_SCAN_N',str(top_n)))
+    refresh=_env_bool('PHOENIX_DAILY_REFRESH',True); intraday=_env_bool('PHOENIX_INTRADAY_ENABLED',True); overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(top_n)))
+    cmd=[py,'main.py','--top','--top-n',str(scan_n)]
+    if refresh: cmd.append('--refresh')
+    _send(f'{header(f"21:00 Daily Top {top_n} 실행 시작")}\n\n분석 중입니다...')
+    env=os.environ.copy(); env['PYTHONUTF8']='1'; env['PYTHONIOENCODING']='utf-8'
+    proc=subprocess.run(cmd,cwd=str(project_dir),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,env=env,shell=False)
+    out=(proc.stdout or '') + (('\n[stderr]\n'+proc.stderr) if proc.stderr else '')
+    out=compact_cli_output(out,max_chars=3300)
+    extra=''
+    if intraday and proc.returncode==0:
+        tickers=extract_candidate_tickers(out,limit=overlay_max)
+        if tickers:
+            eng=IntradayContextEngine(os.getenv('PHOENIX_INTRADAY_PERIOD','5d'),os.getenv('PHOENIX_INTRADAY_INTERVAL_10M','10m'),os.getenv('PHOENIX_INTRADAY_INTERVAL_30M','30m'),_env_bool('PHOENIX_INTRADAY_PREPOST',True))
+            extra='\n\n'+format_intraday_overlay(eng.analyze_many(tickers),max_items=overlay_max)
+    title=f'21:00 Daily Top {top_n}'
+    msg=f'{header(title)}\n\n⚠️ Phoenix 실행 실패 code={proc.returncode}\n\n{out}\n\n{disclaimer()}' if proc.returncode else f'{header(title)}\n\n{out}{extra}\n\n{disclaimer()}'
+    _send(msg)
+def run_loop():
+    last=None; print('Daily 21:00 KST scheduler started. Ctrl+C to stop.')
     while True:
-        now = datetime.now(KST)
-        today = now.strftime("%Y-%m-%d")
-        if now.hour == 21 and now.minute == 0 and last_sent_date != today:
-            try:
-                run_daily_once()
-                last_sent_date = today
-            except Exception as exc:
-                _send_daily_message(f"⚠️ Daily job error\n\n{type(exc).__name__}: {exc}")
-                last_sent_date = today
+        now=datetime.now(KST); today=now.strftime('%Y-%m-%d')
+        if now.hour==21 and now.minute==0 and last!=today:
+            try: run_daily_once(); last=today
+            except Exception as e: _send(f'⚠️ Daily job error\n\n{type(e).__name__}: {e}'); last=today
         time.sleep(20)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="한 번만 실행하고 종료")
-    args = parser.parse_args()
-    if args.once:
-        run_daily_once()
-    else:
-        run_loop()
-
-
-if __name__ == "__main__":
-    main()
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument('--once',action='store_true'); args=ap.parse_args()
+    run_daily_once() if args.once else run_loop()
+if __name__=='__main__': main()
