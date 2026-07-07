@@ -1,51 +1,127 @@
-# Phoenix Quant v1.2
+# Phoenix Quant v1.8
 
-Explainable Quant Research Platform MVP.
+**Explainable Quant Research Platform**
 
-v1.2는 기존 Phoenix AI Core MVP(v1.1)에 다음 기능을 추가한 버전입니다.
+Phoenix Quant는 **설명 가능한(Explainable) 퀀트 리서치 플랫폼**입니다.
+단순히 종목을 추천하는 것이 아니라, **왜 그런 결과가 나왔는지**, **과거 어떤 사례와 유사한지**, **백테스트에서 실제로 어떤 성과를 보였는지**를 함께 제공합니다.
 
-## 추가 기능
+> 연구용 프로젝트이며 투자 자문이 아닙니다.
 
-- Market Regime Engine (`regime_v1`)
-  - QQQ/SPY/IWM/SMH/SOXX/VIX 기반 시장 국면 분류
-  - 예: `AI Growth Rotation`, `Broad Bull`, `Risk Off`, `Bear Trend`, `Neutral / Mixed`
-- Sector Rotation Engine (`rotation_v1`)
-  - XLK/XLY/XLC/XLF/XLV/XLI/XLE/XLP/XLU/XLB/XLRE/SMH/SOXX/QQQ ETF 강도 계산
-- Correlation Engine (`correlation_v1`)
-  - 티커와 QQQ/SPY/섹터 ETF/주요 동종주 간 90/180/360일 상관계수 계산
-- Ranking Engine (`ranking_v1`)
-  - Universe 전체를 분석해 Top-N 랭킹 출력
-- 출력 개선
-  - `Pattern`을 `Pattern Rarity`로 변경
-  - Pattern Rarity는 “상승확률”이 아니라 “이례도”임을 명시
-  - 동일 유사사례 표시 중복을 종목당 최대 1개로 완화
+---
 
-## 실행
+# 주요 기능
+
+## Market Intelligence
+- Market Regime Engine
+- Sector Rotation Engine
+- Correlation Engine
+
+## Pattern Analysis
+- Feature Engine (13개 Baseline Feature)
+- Isolation Forest 기반 Pattern Engine
+- Cosine Similarity Engine
+
+## Decision Engine
+- Suitability Score
+- Confidence Score
+- Risk Score
+- Explainable Score Breakdown
+
+## Ranking Engine
+- Universe Top-N Ranking
+- Sector / Market Context 반영
+
+## Trade Simulation Engine (v1.6~)
+- TP / SL / Hold 기반 매매 시뮬레이션
+- Win Rate
+- Profit Factor
+- MDD
+- Sharpe
+
+## Benchmark Engine (v1.8)
+- Walk-forward(as-of) 방식 검증
+- Random Baseline 비교
+- Alpha 측정
+- Trade Simulation
+- Grid Search
+- 현실적인 체결 가정
+  - 기본 진입: Next Open
+  - Fee: 1.5 bps
+  - Slippage: 5 bps
+
+---
+
+# 실행
 
 ```bash
 pip install -r requirements.txt
+
 python main.py --ticker MRVL --refresh --retrain
-```
-
-랭킹:
-
-```bash
-python main.py --top --top-n 20 --refresh --retrain
-```
-
-두 번째부터는 캐시/모델을 재사용합니다.
-
-```bash
-python main.py --ticker MRVL
 python main.py --top --top-n 20
 ```
 
-## 테스트
+백테스트
 
 ```bash
-python tests/test_core_synthetic.py
+python benchmark.py --start 2025-01-01 --end 2026-07-06 --top-list 5,10,20 --frequency monthly --random-baseline 1000
 ```
 
-## 주의
+Trade Simulation + Grid Search
 
-본 프로젝트는 과거 패턴 기반 통계적 참고 자료를 제공하는 연구용 도구이며, 투자 자문이 아닙니다.
+```bash
+python benchmark.py ^
+  --start 2025-01-01 ^
+  --end 2026-07-06 ^
+  --trade-sim ^
+  --grid-search
+```
+
+---
+
+# 현재 구현 완료
+
+- Engine Registry Architecture
+- Feature Catalog
+- Pattern Engine
+- Similarity Engine
+- Market Regime Engine
+- Sector Rotation Engine
+- Correlation Engine
+- Decision Engine
+- Explain Engine
+- Ranking Engine
+- Trade Simulation Engine
+- Benchmark Engine
+- Random Baseline
+- Grid Search
+
+---
+
+# Roadmap
+
+## v1.9
+- Train/Test Split
+- Out-of-Sample Validation
+
+## v2.0
+- Walk-Forward Optimization
+
+## v2.1
+- Bootstrap
+- Monte Carlo
+- p-value / Confidence Interval
+
+## v2.2
+- Decision Weight Optimization
+
+## v2.3
+- Portfolio Optimizer
+- Kelly Position Sizing
+- Sector Diversification
+
+---
+
+# Disclaimer
+
+본 프로젝트는 과거 데이터를 이용한 통계적 연구 도구입니다.
+투자 판단과 투자 손실에 대한 책임은 사용자에게 있습니다.

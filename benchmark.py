@@ -48,6 +48,13 @@ class BenchmarkConfig:
     stop_loss: float
     hold_days: int
     same_day_rule: str
+    entry_mode: str
+    fee_bps: float
+    slippage_bps: float
+    grid_search: bool
+    tp_list: Optional[str]
+    sl_list: Optional[str]
+    hold_list: Optional[str]
 
 
 def _ensure_dirs(config: AppConfig) -> None:
@@ -406,16 +413,19 @@ def _build_trade_rows_with_engine(
     stop_loss: float,
     hold_days: int,
     same_day_rule: str,
+    entry_mode: str,
+    fee_bps: float,
+    slippage_bps: float,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     config = TradeConfig(
         take_profit=float(take_profit),
         stop_loss=float(stop_loss),
         max_hold_days=int(hold_days),
         trailing_stop=None,
-        entry_mode=EntryMode.CLOSE,
+        entry_mode=EntryMode(entry_mode),
         same_day_rule=SameDayRule(same_day_rule),
-        fee_bps=0.0,
-        slippage_bps=0.0,
+        fee_bps=float(fee_bps),
+        slippage_bps=float(slippage_bps),
     )
     engine = TradeSimulationEngine(config)
     candidates = _build_trade_candidates(selected_rows)
@@ -461,6 +471,85 @@ def _build_trade_rows_with_engine(
     return rows, summary
 
 
+
+def _parse_float_list(value: Optional[str], default: List[float]) -> List[float]:
+    if not value:
+        return default
+    out: List[float] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(float(part))
+    if not out:
+        return default
+    return sorted(set(out))
+
+
+def _parse_int_list(value: Optional[str], default: List[int]) -> List[int]:
+    if not value:
+        return default
+    out: List[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(int(part))
+    if not out:
+        return default
+    return sorted(set(out))
+
+
+def _grid_search_trade_rules(
+    selected_rows: List[Dict[str, Any]],
+    full_raw: Dict[str, pd.DataFrame],
+    tp_values: List[float],
+    sl_values: List[float],
+    hold_values: List[int],
+    same_day_rule: str,
+    entry_mode: str,
+    fee_bps: float,
+    slippage_bps: float,
+) -> pd.DataFrame:
+    rows: List[Dict[str, Any]] = []
+    for tp in tp_values:
+        for sl in sl_values:
+            for hold in hold_values:
+                _trade_rows, summary = _build_trade_rows_with_engine(
+                    selected_rows,
+                    full_raw,
+                    take_profit=tp,
+                    stop_loss=sl,
+                    hold_days=hold,
+                    same_day_rule=same_day_rule,
+                    entry_mode=entry_mode,
+                    fee_bps=fee_bps,
+                    slippage_bps=slippage_bps,
+                )
+                summary = dict(summary)
+                summary["take_profit"] = tp
+                summary["stop_loss"] = sl
+                summary["hold_days"] = hold
+                summary["score_pf_mdd"] = (
+                    float(summary.get("profit_factor", 0.0)) / max(float(summary.get("mdd", 0.0)), 0.01)
+                )
+                summary["score_avg_mdd"] = (
+                    float(summary.get("avg_return", 0.0)) / max(float(summary.get("mdd", 0.0)), 0.01)
+                )
+                rows.append(summary)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # 실전적 정렬: PF 우선, MDD 낮게, 평균수익 높게
+    sort_cols = ["profit_factor", "avg_return", "mdd"]
+    ascending = [False, False, True]
+    df = df.sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
+    df.insert(0, "grid_rank", range(1, len(df) + 1))
+    return df
+
+
 def _daily_summary(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
@@ -495,7 +584,7 @@ def _bucket_summary(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def _write_html_report(path: str, summary: Dict[str, Any], daily: pd.DataFrame, monthly: pd.DataFrame, bucket: pd.DataFrame, detail: pd.DataFrame, top_list: Optional[pd.DataFrame] = None, random_df: Optional[pd.DataFrame] = None, alpha_df: Optional[pd.DataFrame] = None, trade_summary_df: Optional[pd.DataFrame] = None, trade_df: Optional[pd.DataFrame] = None) -> None:
+def _write_html_report(path: str, summary: Dict[str, Any], daily: pd.DataFrame, monthly: pd.DataFrame, bucket: pd.DataFrame, detail: pd.DataFrame, top_list: Optional[pd.DataFrame] = None, random_df: Optional[pd.DataFrame] = None, alpha_df: Optional[pd.DataFrame] = None, trade_summary_df: Optional[pd.DataFrame] = None, trade_df: Optional[pd.DataFrame] = None, grid_search_df: Optional[pd.DataFrame] = None) -> None:
     def table(df: pd.DataFrame, max_rows: int = 200) -> str:
         if df is None or df.empty:
             return "<p>No data</p>"
@@ -532,6 +621,7 @@ code {{ background: #f5f5f5; padding: 2px 5px; border-radius: 4px; }}
 <h2>Top N / Alpha Summary</h2>{table(alpha_df)}
 <h2>Top N Summary</h2>{table(top_list)}
 <h2>Random Baseline</h2>{table(random_df)}
+<h2>Trade Rule Grid Search</h2>{table(grid_search_df)}
 <h2>Trade Simulation Summary</h2>{table(trade_summary_df)}
 <h2>Trade Simulation Detail</h2>{table(trade_df, max_rows=500)}
 <h2>Monthly Summary</h2>{table(monthly)}
@@ -602,6 +692,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     selected_rows = _rows_for_top_n(detail_rows, bench.top_n)
     trade_rows: List[Dict[str, Any]] = []
     trade_summary: Dict[str, Any] = {}
+    grid_search_df = pd.DataFrame()
     if bench.trade_sim:
         trade_rows, trade_summary = _build_trade_rows_with_engine(
             selected_rows,
@@ -610,6 +701,25 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
             stop_loss=bench.stop_loss,
             hold_days=bench.hold_days,
             same_day_rule=bench.same_day_rule,
+            entry_mode=bench.entry_mode,
+            fee_bps=bench.fee_bps,
+            slippage_bps=bench.slippage_bps,
+        )
+
+    if bench.grid_search:
+        tp_values = _parse_float_list(bench.tp_list, [0.03, 0.04, 0.05, 0.06, 0.08])
+        sl_values = _parse_float_list(bench.sl_list, [0.02, 0.03, 0.04])
+        hold_values = _parse_int_list(bench.hold_list, [3, 5, 7, 10])
+        grid_search_df = _grid_search_trade_rules(
+            selected_rows,
+            full_raw,
+            tp_values=tp_values,
+            sl_values=sl_values,
+            hold_values=hold_values,
+            same_day_rule=bench.same_day_rule,
+            entry_mode=bench.entry_mode,
+            fee_bps=bench.fee_bps,
+            slippage_bps=bench.slippage_bps,
         )
     if trade_summary:
         # v1.5 출력/CSV 컬럼명 호환 alias
@@ -655,6 +765,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
         "alpha": os.path.join(out_dir, "benchmark_alpha.csv"),
         "trade": os.path.join(out_dir, "benchmark_trade_sim.csv"),
         "trade_summary": os.path.join(out_dir, "benchmark_trade_summary.csv"),
+        "grid_search": os.path.join(out_dir, "benchmark_trade_grid_search.csv"),
         "daily": os.path.join(out_dir, "benchmark_daily.csv"),
         "monthly": os.path.join(out_dir, "benchmark_monthly.csv"),
         "bucket": os.path.join(out_dir, "benchmark_score_buckets.csv"),
@@ -670,18 +781,19 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     alpha_df.to_csv(paths["alpha"], index=False, encoding="utf-8-sig")
     trade_df.to_csv(paths["trade"], index=False, encoding="utf-8-sig")
     trade_summary_df.to_csv(paths["trade_summary"], index=False, encoding="utf-8-sig")
+    grid_search_df.to_csv(paths["grid_search"], index=False, encoding="utf-8-sig")
     daily_df.to_csv(paths["daily"], index=False, encoding="utf-8-sig")
     monthly_df.to_csv(paths["monthly"], index=False, encoding="utf-8-sig")
     bucket_df.to_csv(paths["bucket"], index=False, encoding="utf-8-sig")
     pd.DataFrame(failed_dates).to_csv(paths["failed"], index=False, encoding="utf-8-sig")
-    _write_html_report(paths["html"], summary, daily_df, monthly_df, bucket_df, detail_df, top_list_df, random_df, alpha_df, trade_summary_df, trade_df)
+    _write_html_report(paths["html"], summary, daily_df, monthly_df, bucket_df, detail_df, top_list_df, random_df, alpha_df, trade_summary_df, trade_df, grid_search_df)
 
     print("[5/5] 완료")
-    return {"summary": summary, "paths": paths, "failed_dates": failed_dates, "top_list": top_list_df, "random": random_df, "alpha": alpha_df, "trade_summary": trade_summary_df, "trade": trade_df}
+    return {"summary": summary, "paths": paths, "failed_dates": failed_dates, "top_list": top_list_df, "random": random_df, "alpha": alpha_df, "trade_summary": trade_summary_df, "trade": trade_df, "grid_search": grid_search_df}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Phoenix Quant Benchmark v1.6")
+    p = argparse.ArgumentParser(description="Phoenix Quant Benchmark v1.8")
     p.add_argument("--config", default="config/config.yaml", help="config.yaml 경로")
     p.add_argument("--start", required=True, help="시작일 YYYY-MM-DD")
     p.add_argument("--end", required=True, help="종료일 YYYY-MM-DD")
@@ -701,6 +813,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stop-loss", type=float, default=0.03, help="손절 비율. 예: 0.03 = -3%")
     p.add_argument("--hold-days", type=int, default=5, help="최대 보유 거래일 수")
     p.add_argument("--same-day-rule", choices=["stop_first", "take_first", "midpoint"], default="stop_first", help="일봉에서 익절/손절이 같은 날 모두 닿은 경우 처리 방식")
+    p.add_argument("--entry-mode", choices=["close", "next_open"], default="next_open", help="진입가 기준. 실전형 기본값은 next_open")
+    p.add_argument("--fee-bps", type=float, default=1.5, help="편도 수수료 bps. 기본 1.5bps")
+    p.add_argument("--slippage-bps", type=float, default=5.0, help="편도 슬리피지 bps. 기본 5bps")
+    p.add_argument("--grid-search", action="store_true", help="TP/SL/Hold 조합을 자동 탐색")
+    p.add_argument("--tp-list", default=None, help="Grid Search TP 목록. 예: 0.03,0.04,0.05,0.06")
+    p.add_argument("--sl-list", default=None, help="Grid Search SL 목록. 예: 0.02,0.03,0.04")
+    p.add_argument("--hold-list", default=None, help="Grid Search 보유일 목록. 예: 3,5,7,10")
     return p
 
 
@@ -727,11 +846,18 @@ def main() -> None:
         stop_loss=args.stop_loss,
         hold_days=args.hold_days,
         same_day_rule=args.same_day_rule,
+        entry_mode=args.entry_mode,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
+        grid_search=args.grid_search,
+        tp_list=args.tp_list,
+        sl_list=args.sl_list,
+        hold_list=args.hold_list,
     )
     result = run_benchmark(app_config, bench)
     s = result["summary"]
     print()
-    print("Phoenix Quant Benchmark v1.6")
+    print("Phoenix Quant Benchmark v1.8")
     print("━━━━━━━━━━━━━━━━━━━━")
     print(f"기간: {s['start']} ~ {s['end']} / frequency={s['frequency']} / Top{s['top_n']}")
     print(f"기준일 수: {s['n_dates']} / 거래 수: {s['n_trades']} / 실패 기준일: {s['failed_dates']}")
@@ -756,10 +882,22 @@ def main() -> None:
         tr = trade_summary_df.iloc[0]
         print()
         print("Trade Simulation:")
-        print(f"- Rule: TP {_pct(tr.get('take_profit'))} / SL {_pct(tr.get('stop_loss'))} / Hold {int(tr.get('hold_days', 0))}D / same-day={tr.get('same_day_rule')}")
+        print(f"- Rule: Entry {tr.get('entry_mode', 'next_open')} / TP {_pct(tr.get('take_profit'))} / SL {_pct(tr.get('stop_loss'))} / Hold {int(tr.get('hold_days', 0))}D / same-day={tr.get('same_day_rule')} / fee {tr.get('fee_bps', 0)}bps / slip {tr.get('slippage_bps', 0)}bps")
         print(f"- Win Rate: {_pct(tr.get('win_rate'))} / Avg Return: {_pct(tr.get('avg_trade_return'))} / Median: {_pct(tr.get('median_trade_return'))}")
         print(f"- Cum Return(eq-weight sequence): {_pct(tr.get('cum_return_equal_weight'))} / MDD: {_pct(tr.get('mdd_trade'))} / PF: {_fmt(tr.get('profit_factor_trade'))}")
         print(f"- TP Rate: {_pct(tr.get('take_profit_rate'))} / SL Rate: {_pct(tr.get('stop_loss_rate'))} / Time Exit: {_pct(tr.get('time_exit_rate'))}")
+    grid_search_df = result.get("grid_search")
+    if grid_search_df is not None and not grid_search_df.empty:
+        print()
+        print("Trade Rule Grid Search Top 5:")
+        for _, row in grid_search_df.head(5).iterrows():
+            print(
+                f"- #{int(row.get('grid_rank', 0))} "
+                f"TP {_pct(row.get('take_profit'))} / SL {_pct(row.get('stop_loss'))} / Hold {int(row.get('hold_days', 0))}D "
+                f"| Win {_pct(row.get('win_rate'))} / Avg {_pct(row.get('avg_return'))} "
+                f"/ MDD {_pct(row.get('mdd'))} / PF {_fmt(row.get('profit_factor'))}"
+            )
+
     print()
     print("저장 위치:")
     for name, path in result["paths"].items():
