@@ -1,0 +1,103 @@
+engines:
+  context_engine: market_v1
+  feature_engine: catalog_v1
+  pattern_engine: isolation_forest
+  similarity_engine: cosine_knn
+  decision_engine: weighted_v1
+  explain_engine: template_v1
+  backtest_engine: as_of_v1
+  feature_importance_engine: random_forest
+  experiment_engine: cv_compare
+  regime_engine: regime_v1
+  sector_rotation_engine: rotation_v1
+  correlation_engine: correlation_v1
+  ranking_engine: ranking_v1
+
+universe:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - AVGO
+  - TSLA
+  - AMD
+  - NFLX
+  - ADBE
+  - COST
+  - PEP
+  - CSCO
+  - INTC
+  - QCOM
+  - TXN
+  - AMAT
+  - MU
+  - LRCX
+  - KLAC
+  - MRVL
+  - PANW
+  - CRWD
+  - PLTR
+  - SNPS
+  - CDNS
+  - ASML
+  - ABNB
+  - BKNG
+  - ISRG
+  - REGN
+  - VRTX
+  - GILD
+  - SBUX
+  - MDLZ
+  - ADI
+  - PYPL
+  - INTU
+  - ORLY
+
+market_etfs:
+  - SPY
+  - QQQ
+  - DIA
+  - IWM
+  - SMH
+  - SOXX
+  - XLK
+  - XLY
+  - XLC
+  - XLF
+  - XLV
+  - XLI
+  - XLE
+  - XLP
+  - XLU
+  - XLB
+  - XLRE
+  - "^VIX"
+
+sector_etf_map:
+  NVDA: SMH
+  AMD: SMH
+  AVGO: SMH
+  QCOM: SMH
+  TXN: SMH
+  AMAT: SOXX
+  MU: SOXX
+  LRCX: SOXX
+  KLAC: SOXX
+  MRVL: SOXX
+  ASML: SMH
+  ADI: SOXX
+  INTC: SOXX
+
+default_sector_etf: QQQ
+cache_dir: data
+models_dir: models
+reports_dir: reports
+similarity_k: 50
+similarity_threshold: 0.80
+
+backtest:
+  horizons_days: [5, 10]
+  thresholds_pct: [0.05, 0.10]
+  min_trades_for_confidence: 20

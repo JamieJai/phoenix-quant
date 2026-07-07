@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env
+.env
+.env.*
+
+# Phoenix generated files
+data/
+models/
+reports/
+
+# Model/cache artifacts
+*.pkl
+*.joblib
+*.parquet
+*.feather
+*.h5
+
+# Large output files
+*.csv
+*.xlsx
+*.html
+
+# IDE
+.vscode/
+.idea/
