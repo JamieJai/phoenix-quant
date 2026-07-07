@@ -1,50 +1,84 @@
-"""
-trade_rules.py
----------------
-Sprint 6-2
+from __future__ import annotations
 
-거래 규칙(TP/SL/Trailing/Time Exit)만 담당하는 모듈.
-"""
+from dataclasses import replace
+from typing import Tuple
 
-from dataclasses import dataclass
-from enum import Enum
+from .trade_models import ExitReason, SameDayRule, TradeConfig
 
 
-class ExitReason(str, Enum):
-    TAKE_PROFIT = "TP"
-    STOP_LOSS = "SL"
-    TRAILING = "TRAILING"
-    TIME = "TIME"
-    GAP = "GAP"
-    HOLDING = "HOLDING"
+def normalize_config(config: TradeConfig | None = None, **overrides) -> TradeConfig:
+    """TradeConfig를 만들고 문자열 옵션을 Enum으로 정규화한다."""
+    cfg = config or TradeConfig()
+    if overrides:
+        cfg = replace(cfg, **{k: v for k, v in overrides.items() if v is not None})
+
+    if isinstance(cfg.same_day_rule, str):
+        cfg.same_day_rule = SameDayRule(cfg.same_day_rule)
+    return cfg
 
 
-@dataclass
-class TradeRule:
-    take_profit: float = 0.05
-    stop_loss: float = 0.03
-    trailing_stop: float | None = None
-    max_hold_days: int = 5
-    fee: float = 0.00015
-    slippage: float = 0.0005
-    stop_first_on_same_day: bool = True
+def take_profit_price(entry_price: float, config: TradeConfig) -> float:
+    return float(entry_price) * (1.0 + float(config.take_profit))
 
 
-def check_take_profit(entry_price: float, high_price: float, rule: TradeRule) -> bool:
-    return high_price >= entry_price * (1 + rule.take_profit)
+def stop_loss_price(entry_price: float, config: TradeConfig) -> float:
+    return float(entry_price) * (1.0 - float(config.stop_loss))
 
 
-def check_stop_loss(entry_price: float, low_price: float, rule: TradeRule) -> bool:
-    return low_price <= entry_price * (1 - rule.stop_loss)
+def trailing_stop_price(highest_price: float, config: TradeConfig) -> float | None:
+    if config.trailing_stop is None:
+        return None
+    return float(highest_price) * (1.0 - float(config.trailing_stop))
 
 
-def update_trailing_stop(highest_price: float, current_price: float, rule: TradeRule) -> bool:
-    if rule.trailing_stop is None:
-        return False
-    trigger = highest_price * (1 - rule.trailing_stop)
-    return current_price <= trigger
+def decide_intraday_exit(
+    *,
+    entry_price: float,
+    day_open: float,
+    day_high: float,
+    day_low: float,
+    highest_price: float,
+    config: TradeConfig,
+) -> Tuple[ExitReason | None, float | None]:
+    """일봉 하나에서 TP/SL/Trailing 발생 여부를 판단한다.
+
+    주의:
+    일봉 데이터는 장중 순서를 알 수 없다. 같은 날 TP/SL이 모두 닿으면
+    config.same_day_rule에 따라 보수적으로 판단한다.
+    """
+
+    tp_price = take_profit_price(entry_price, config)
+    sl_price = stop_loss_price(entry_price, config)
+    tr_price = trailing_stop_price(highest_price, config)
+
+    hit_tp = day_high >= tp_price
+    hit_sl = day_low <= sl_price
+    hit_tr = tr_price is not None and day_low <= tr_price
+
+    if hit_tp and (hit_sl or hit_tr):
+        if config.same_day_rule == SameDayRule.TAKE_FIRST:
+            return ExitReason.TAKE_PROFIT, tp_price
+        if config.same_day_rule == SameDayRule.MIDPOINT:
+            # 중립 가정: TP/SL 중간값으로 청산 처리
+            adverse_price = sl_price if hit_sl else tr_price
+            assert adverse_price is not None
+            return ExitReason.TIME_EXIT, (tp_price + adverse_price) / 2.0
+        # 기본: stop_first. 보수적 평가.
+        if hit_sl:
+            return ExitReason.STOP_LOSS, sl_price
+        return ExitReason.TRAILING_STOP, tr_price
+
+    if hit_sl:
+        return ExitReason.STOP_LOSS, sl_price
+
+    if hit_tr:
+        return ExitReason.TRAILING_STOP, tr_price
+
+    if hit_tp:
+        return ExitReason.TAKE_PROFIT, tp_price
+
+    return None, None
 
 
-def apply_costs(raw_return: float, rule: TradeRule) -> float:
-    """수수료+슬리피지 반영"""
-    return raw_return - rule.fee - rule.slippage
+def apply_costs(gross_return: float, config: TradeConfig) -> float:
+    return float(gross_return) - config.round_trip_cost()
