@@ -19,6 +19,13 @@ from phoenix_core.default_features import BASELINE_FEATURE_NAMES
 from phoenix_core.models import RankingItem
 from phoenix_core.pipeline import analyze_ticker_quiet, build_pattern_records
 from phoenix_core.registry import EngineRegistry
+from phoenix_core.trade import (
+    EntryMode,
+    SameDayRule,
+    TradeCandidate,
+    TradeConfig,
+    TradeSimulationEngine,
+)
 
 
 @dataclass
@@ -364,171 +371,94 @@ def _merge_alpha_summary(top_summary: pd.DataFrame, random_summary: pd.DataFrame
     return out
 
 
-def _simulate_trade_for_row(
-    full_raw: Dict[str, pd.DataFrame],
-    row: Dict[str, Any],
-    take_profit: float,
-    stop_loss: float,
-    hold_days: int,
-    same_day_rule: str = "stop_first",
-) -> Dict[str, Any]:
-    """Daily OHLC 기반 단순 매매 시뮬레이션.
 
-    진입: 기준일 종가
-    청산:
-      - 이후 hold_days 거래일 안에 High >= entry*(1+take_profit) 이면 익절
-      - 이후 hold_days 거래일 안에 Low <= entry*(1-stop_loss) 이면 손절
-      - 둘 다 없으면 마지막 보유일 Close 청산
-
-    일봉 데이터만 있으므로 같은 날 TP/SL이 모두 닿은 경우 실제 선후관계는 알 수 없다.
-    기본값 stop_first는 보수적으로 손절 우선 처리한다.
-    """
-    ticker = str(row.get("ticker", "")).upper()
-    as_of = pd.Timestamp(row.get("as_of"))
-    base = {
-        "as_of": str(row.get("as_of")),
-        "ticker": ticker,
-        "rank": row.get("rank"),
-        "entry_price": np.nan,
-        "exit_price": np.nan,
-        "trade_return": np.nan,
-        "exit_reason": "no_data",
-        "holding_days": np.nan,
-        "take_profit": float(take_profit),
-        "stop_loss": float(stop_loss),
-        "max_hold_days": int(hold_days),
-    }
-    if ticker not in full_raw:
-        return base
-    df = full_raw[ticker].sort_index()
-    if as_of not in df.index:
-        prior = df.index[df.index <= as_of]
-        if len(prior) == 0:
-            return base
-        as_of = pd.Timestamp(prior[-1])
-    loc = df.index.get_loc(as_of)
-    if isinstance(loc, slice):
-        loc = loc.start
-    if not isinstance(loc, (int, np.integer)):
-        loc = int(loc[0])
-    entry = float(df.iloc[loc]["Close"])
-    if not np.isfinite(entry) or entry <= 0:
-        return base
-
-    tp_price = entry * (1.0 + float(take_profit))
-    sl_price = entry * (1.0 - float(stop_loss))
-    future = df.iloc[loc + 1: loc + 1 + int(hold_days)]
-    if future.empty:
-        base.update({"entry_price": entry, "exit_reason": "no_future"})
-        return base
-
-    same_day_rule = str(same_day_rule or "stop_first").lower()
-    for i, (_, r) in enumerate(future.iterrows(), start=1):
-        high = float(r["High"])
-        low = float(r["Low"])
-        hit_tp = high >= tp_price
-        hit_sl = low <= sl_price
-        if hit_tp and hit_sl:
-            if same_day_rule == "take_first":
-                exit_price = tp_price
-                reason = "take_profit_same_day"
-            elif same_day_rule == "midpoint":
-                exit_price = (tp_price + sl_price) / 2.0
-                reason = "both_same_day_midpoint"
-            else:
-                exit_price = sl_price
-                reason = "stop_loss_same_day"
-            base.update({
-                "entry_price": entry,
-                "exit_price": exit_price,
-                "trade_return": (exit_price - entry) / entry,
-                "exit_reason": reason,
-                "holding_days": i,
-            })
-            return base
-        if hit_sl:
-            exit_price = sl_price
-            base.update({
-                "entry_price": entry,
-                "exit_price": exit_price,
-                "trade_return": (exit_price - entry) / entry,
-                "exit_reason": "stop_loss",
-                "holding_days": i,
-            })
-            return base
-        if hit_tp:
-            exit_price = tp_price
-            base.update({
-                "entry_price": entry,
-                "exit_price": exit_price,
-                "trade_return": (exit_price - entry) / entry,
-                "exit_reason": "take_profit",
-                "holding_days": i,
-            })
-            return base
-
-    last = future.iloc[-1]
-    exit_price = float(last["Close"])
-    base.update({
-        "entry_price": entry,
-        "exit_price": exit_price,
-        "trade_return": (exit_price - entry) / entry,
-        "exit_reason": "time_exit",
-        "holding_days": len(future),
-    })
-    return base
+def _build_trade_candidates(selected_rows: List[Dict[str, Any]]) -> List[TradeCandidate]:
+    candidates: List[TradeCandidate] = []
+    for row in selected_rows:
+        metadata = {
+            "label": row.get("label"),
+            "suitability_score": row.get("suitability_score"),
+            "confidence_score": row.get("confidence_score"),
+            "risk_score": row.get("risk_score"),
+            "market_score": row.get("market_score"),
+            "sector_score": row.get("sector_score"),
+            "sector_etf": row.get("sector_etf"),
+            "pattern_rarity": row.get("pattern_rarity"),
+            "similarity_hit_5d": row.get("similarity_hit_5d"),
+            "similarity_hit_10d": row.get("similarity_hit_10d"),
+        }
+        candidates.append(
+            TradeCandidate(
+                ticker=str(row.get("ticker", "")).upper(),
+                as_of=pd.Timestamp(row.get("as_of")).date(),
+                score=float(row.get("suitability_score", 0.0) or 0.0),
+                rank=int(row.get("rank", 0) or 0),
+                metadata=metadata,
+            )
+        )
+    return candidates
 
 
-def _build_trade_rows(
+def _build_trade_rows_with_engine(
     selected_rows: List[Dict[str, Any]],
     full_raw: Dict[str, pd.DataFrame],
     take_profit: float,
     stop_loss: float,
     hold_days: int,
     same_day_rule: str,
-) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for row in selected_rows:
-        sim = _simulate_trade_for_row(full_raw, row, take_profit, stop_loss, hold_days, same_day_rule)
-        merged = dict(row)
-        merged.update(sim)
-        out.append(merged)
-    return out
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    config = TradeConfig(
+        take_profit=float(take_profit),
+        stop_loss=float(stop_loss),
+        max_hold_days=int(hold_days),
+        trailing_stop=None,
+        entry_mode=EntryMode.CLOSE,
+        same_day_rule=SameDayRule(same_day_rule),
+        fee_bps=0.0,
+        slippage_bps=0.0,
+    )
+    engine = TradeSimulationEngine(config)
+    candidates = _build_trade_candidates(selected_rows)
+    results = engine.simulate_candidates(
+        candidates=candidates,
+        raw_data=full_raw,
+        config=config,
+    )
+    summary = engine.summarize(results).to_dict()
+    summary.update({
+        "take_profit": float(take_profit),
+        "stop_loss": float(stop_loss),
+        "hold_days": int(hold_days),
+        "same_day_rule": str(same_day_rule),
+        "engine": "TradeSimulationEngine",
+        "entry_mode": config.entry_mode.value,
+        "fee_bps": config.fee_bps,
+        "slippage_bps": config.slippage_bps,
+    })
 
-
-def _summarize_trade_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    df = pd.DataFrame(rows)
-    if df.empty or "trade_return" not in df.columns:
-        return {
-            "n_trades": 0,
-            "win_rate": 0.0,
-            "avg_trade_return": 0.0,
-            "median_trade_return": 0.0,
-            "cum_return_equal_weight": 0.0,
-            "sharpe_trade": 0.0,
-            "mdd_trade": 0.0,
-            "profit_factor_trade": 0.0,
-            "take_profit_rate": 0.0,
-            "stop_loss_rate": 0.0,
-            "time_exit_rate": 0.0,
-        }
-    ret = pd.to_numeric(df["trade_return"], errors="coerce").dropna()
-    if ret.empty:
-        return _summarize_trade_rows([])
-    reasons = df.loc[ret.index, "exit_reason"].astype(str)
-    return {
-        "n_trades": int(len(ret)),
-        "win_rate": float((ret > 0).mean()),
-        "avg_trade_return": float(ret.mean()),
-        "median_trade_return": float(ret.median()),
-        "cum_return_equal_weight": float(np.prod(1.0 + ret.values) - 1.0),
-        "sharpe_trade": _sharpe(ret),
-        "mdd_trade": _max_drawdown(ret),
-        "profit_factor_trade": _profit_factor(ret),
-        "take_profit_rate": float(reasons.str.contains("take_profit", na=False).mean()),
-        "stop_loss_rate": float(reasons.str.contains("stop_loss", na=False).mean()),
-        "time_exit_rate": float((reasons == "time_exit").mean()),
+    result_by_key = {
+        (r.ticker, str(r.as_of), int(r.rank)): r.to_dict()
+        for r in results
     }
+
+    rows: List[Dict[str, Any]] = []
+    for row in selected_rows:
+        key = (
+            str(row.get("ticker", "")).upper(),
+            str(pd.Timestamp(row.get("as_of")).date()),
+            int(row.get("rank", 0) or 0),
+        )
+        merged = dict(row)
+        trade = result_by_key.get(key, {})
+        # v1.5 컬럼명과 호환되도록 alias를 같이 넣는다.
+        if trade:
+            merged.update(trade)
+            merged["trade_return"] = trade.get("net_return", np.nan)
+            merged["exit_reason"] = trade.get("exit_reason", "")
+            merged["holding_days"] = trade.get("hold_days", np.nan)
+        rows.append(merged)
+
+    return rows, summary
 
 
 def _daily_summary(rows: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -673,7 +603,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     trade_rows: List[Dict[str, Any]] = []
     trade_summary: Dict[str, Any] = {}
     if bench.trade_sim:
-        trade_rows = _build_trade_rows(
+        trade_rows, trade_summary = _build_trade_rows_with_engine(
             selected_rows,
             full_raw,
             take_profit=bench.take_profit,
@@ -681,13 +611,17 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
             hold_days=bench.hold_days,
             same_day_rule=bench.same_day_rule,
         )
-        trade_summary = _summarize_trade_rows(trade_rows)
-        trade_summary.update({
-            "take_profit": bench.take_profit,
-            "stop_loss": bench.stop_loss,
-            "hold_days": bench.hold_days,
-            "same_day_rule": bench.same_day_rule,
-        })
+    if trade_summary:
+        # v1.5 출력/CSV 컬럼명 호환 alias
+        trade_summary["avg_trade_return"] = trade_summary.get("avg_return", np.nan)
+        trade_summary["median_trade_return"] = trade_summary.get("median_return", np.nan)
+        trade_summary["cum_return_equal_weight"] = trade_summary.get("cumulative_return", np.nan)
+        trade_summary["mdd_trade"] = trade_summary.get("mdd", np.nan)
+        trade_summary["profit_factor_trade"] = trade_summary.get("profit_factor", np.nan)
+        trade_summary["take_profit_rate"] = trade_summary.get("tp_rate", np.nan)
+        trade_summary["stop_loss_rate"] = trade_summary.get("sl_rate", np.nan)
+        trade_summary["time_exit_rate"] = trade_summary.get("time_exit_rate", np.nan)
+
     detail_df = pd.DataFrame(selected_rows)
     trade_df = pd.DataFrame(trade_rows)
     trade_summary_df = pd.DataFrame([trade_summary]) if trade_summary else pd.DataFrame()
@@ -747,7 +681,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Phoenix Quant Benchmark v1.5")
+    p = argparse.ArgumentParser(description="Phoenix Quant Benchmark v1.6")
     p.add_argument("--config", default="config/config.yaml", help="config.yaml 경로")
     p.add_argument("--start", required=True, help="시작일 YYYY-MM-DD")
     p.add_argument("--end", required=True, help="종료일 YYYY-MM-DD")
@@ -797,7 +731,7 @@ def main() -> None:
     result = run_benchmark(app_config, bench)
     s = result["summary"]
     print()
-    print("Phoenix Quant Benchmark v1.5")
+    print("Phoenix Quant Benchmark v1.6")
     print("━━━━━━━━━━━━━━━━━━━━")
     print(f"기간: {s['start']} ~ {s['end']} / frequency={s['frequency']} / Top{s['top_n']}")
     print(f"기준일 수: {s['n_dates']} / 거래 수: {s['n_trades']} / 실패 기준일: {s['failed_dates']}")
