@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+
+try:
+    from xgboost import XGBClassifier
+except Exception:  # pragma: no cover
+    XGBClassifier = None
+
+from ..default_features import BASELINE_FEATURE_NAMES
 from ..interfaces import Engine
-from ..models import RankingInput, RankingItem, RankingResult
+from ..models import FeatureEngineInput, RankingInput, RankingItem, RankingResult
 from ..pipeline import analyze_ticker_quiet, build_trade_plan
 from ..registry import EngineRegistry
 
@@ -16,8 +26,58 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
     slot = "ranking_engine"
     name = "ranking_v1"
 
+    def _fit_xgb_model(self, records):
+        rows = []
+        for record in records:
+            label = record.forward_labels.get("hit_5pct_5d")
+            if label is None or pd.isna(label):
+                continue
+            row = {name: record.feature_vector.values.get(name) for name in BASELINE_FEATURE_NAMES}
+            row["label"] = int(float(label) > 0.0)
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        if df.empty or len(df) < 500 or df["label"].nunique() < 2:
+            return None
+        df = df.apply(pd.to_numeric, errors="coerce").dropna(subset=BASELINE_FEATURE_NAMES + ["label"])
+        if len(df) < 500 or df["label"].nunique() < 2:
+            return None
+        if XGBClassifier is None:
+            model = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
+        else:
+            model = XGBClassifier(
+                n_estimators=350,
+                max_depth=4,
+                learning_rate=0.04,
+                subsample=0.85,
+                colsample_bytree=0.85,
+                reg_lambda=1.5,
+                objective="binary:logistic",
+                eval_metric="logloss",
+                random_state=42,
+                n_jobs=-1,
+                tree_method="hist",
+            )
+        model.fit(df[BASELINE_FEATURE_NAMES].values.astype(float), df["label"].astype(int).values)
+        return model
+
+    def _xgb_score(self, model, values: dict[str, float]) -> float:
+        if model is None:
+            return float("nan")
+        x = np.array([[float(values[name]) for name in BASELINE_FEATURE_NAMES]], dtype=float)
+        if not np.isfinite(x).all():
+            return float("nan")
+        if hasattr(model, "predict_proba"):
+            return float(model.predict_proba(x)[0, 1])
+        return float(model.predict(x)[0])
+
     def run(self, input_data: RankingInput) -> RankingResult:
         items: list[RankingItem] = []
+        xgb_model = None
+        try:
+            xgb_model = self._fit_xgb_model((input_data.prebuilt or {}).get("records", []))
+        except Exception as exc:  # noqa: BLE001
+            if input_data.verbose:
+                print(f"[rank warn] xgb disabled: {exc}")
         for ticker in input_data.universe:
             try:
                 decision, meta = analyze_ticker_quiet(
@@ -31,6 +91,12 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     prebuilt=input_data.prebuilt,
                 )
                 trade_plan = build_trade_plan(meta["latest_close"], input_data.config)
+                feature_engine = (input_data.prebuilt or {}).get("feature_engine")
+                feature_vector = feature_engine.run(FeatureEngineInput(ticker=ticker, ohlcv=input_data.raw_data[ticker], as_of=decision.as_of))
+                xgb_score = self._xgb_score(xgb_model, feature_vector.values)
+                final_rank_score = float(decision.suitability_score)
+                if np.isfinite(xgb_score):
+                    final_rank_score = 0.70 * final_rank_score + 0.30 * (xgb_score * 100.0)
                 items.append(RankingItem(
                     ticker=ticker,
                     as_of=decision.as_of,
@@ -46,9 +112,11 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     take_profit_price=float(trade_plan["take_profit_price"]),
                     stop_loss_price=float(trade_plan["stop_loss_price"]),
                     max_hold_days=int(trade_plan["max_hold_days"]),
+                    xgb_score=0.0 if not np.isfinite(xgb_score) else xgb_score,
+                    final_rank_score=final_rank_score,
                 ))
             except Exception as exc:  # noqa: BLE001
                 if input_data.verbose:
                     print(f"[rank warn] {ticker}: {exc}")
-        items.sort(key=lambda x: (x.suitability_score, x.confidence_score), reverse=True)
+        items.sort(key=lambda x: (x.final_rank_score or x.suitability_score, x.suitability_score, x.confidence_score), reverse=True)
         return RankingResult(as_of=items[0].as_of if items else input_data.as_of, items=items[:input_data.top_n])

@@ -427,11 +427,12 @@ def render_ranking_report(ranking) -> str:
         "━━━━━━━━━━━━━━━━━━━━",
         f"기준일: {ranking.as_of}",
         "",
-        "Rank | Ticker | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label",
+        "Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label",
     ]
     for i, item in enumerate(ranking.items, start=1):
         lines.append(
-            f"{i:>2} | {item.ticker:<6} | {item.suitability_score:>5.1f} | {item.confidence_score:>5.1f} | "
+            f"{i:>2} | {item.ticker:<6} | {item.final_rank_score:>5.1f} | {item.xgb_score*100:>5.1f} | "
+            f"{item.suitability_score:>5.1f} | {item.confidence_score:>5.1f} | "
             f"{item.risk_score:>5.1f} | {item.market_score:>5.1f} | "
             f"${item.entry_price:>7.2f} | ${item.take_profit_price:>7.2f} | ${item.stop_loss_price:>7.2f} | "
             f"{item.max_hold_days:>2}d | {item.hit_rate_5d*100:>5.0f}% | {item.label}"

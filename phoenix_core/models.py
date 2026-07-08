@@ -107,6 +107,8 @@ class RankingItem:
     take_profit_price: float = 0.0
     stop_loss_price: float = 0.0
     max_hold_days: int = 0
+    xgb_score: float = 0.0
+    final_rank_score: float = 0.0
 
 
 @dataclass
@@ -184,8 +186,9 @@ class SimilarityResult:
     query_date: date
     neighbors: List[SimilarNeighbor]
     n_similar: int
-    hit_rate_5d: float
-    hit_rate_10d: float
+    hit_rate_5d: float = 0.0
+    hit_rate_10d: float = 0.0
+    n_unique_dates: int = 0
     avg_similarity: float = 0.0
 
 

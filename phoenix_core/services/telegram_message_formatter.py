@@ -29,11 +29,25 @@ def compact_ranking_output(text: str, max_rows: int = 10) -> str:
     as_of = next((line.strip() for line in lines if line.strip().startswith('기준일:')), '')
     rows = []
     for line in lines:
-        m = re.match(r'\s*(\d+)\s*\|\s*([A-Z0-9.\-]+)\s*\|\s*([0-9.]+)\s*\|\s*([0-9.]+)\s*\|\s*([0-9.]+).*?\|\s*([0-9.]+)%\s*\|\s*(.+?)\s*$', line)
-        if not m:
+        cols = [col.strip() for col in line.split('|')]
+        if len(cols) < 7 or not cols[0].isdigit():
             continue
-        rank, ticker, suitability, confidence, risk, hit5, label = m.groups()
-        rows.append(f'{int(rank):>2}. {ticker:<6} score {float(suitability):>4.1f} | conf {float(confidence):>4.0f} | risk {float(risk):>4.0f} | 5D {float(hit5):>3.0f}% | {label}')
+        try:
+            if len(cols) >= 14:
+                rank, ticker = int(cols[0]), cols[1]
+                final_score, xgb_score = float(cols[2]), float(cols[3])
+                suitability, confidence, risk = float(cols[4]), float(cols[5]), float(cols[6])
+                hit5 = float(cols[-2].replace('%', '').strip())
+                label = cols[-1]
+                rows.append(f'{rank:>2}. {ticker:<6} final {final_score:>4.1f} | xgb {xgb_score:>4.0f} | score {suitability:>4.1f} | conf {confidence:>4.0f} | risk {risk:>4.0f} | 5D {hit5:>3.0f}% | {label}')
+            else:
+                rank, ticker = int(cols[0]), cols[1]
+                suitability, confidence, risk = float(cols[2]), float(cols[3]), float(cols[4])
+                hit5 = float(cols[-2].replace('%', '').strip())
+                label = cols[-1]
+                rows.append(f'{rank:>2}. {ticker:<6} score {suitability:>4.1f} | conf {confidence:>4.0f} | risk {risk:>4.0f} | 5D {hit5:>3.0f}% | {label}')
+        except ValueError:
+            continue
         if len(rows) >= max_rows:
             break
     if not rows:
@@ -41,7 +55,7 @@ def compact_ranking_output(text: str, max_rows: int = 10) -> str:
     parts = []
     if as_of:
         parts.append(as_of)
-    parts.append('Rank | Ticker | Score | Conf | Risk | 5D | Label')
+    parts.append('Rank | Ticker | Final/XGB | Score | Conf | Risk | 5D | Label')
     parts.extend(rows)
     return '\n'.join(parts)
 

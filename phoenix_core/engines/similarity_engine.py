@@ -57,6 +57,16 @@ class CosineKnnSimilarityEngine(SimilarityEngineInterface):
         self._fitted = True
         return self
 
+    def _dedupe_by_date(self, neighbors: list[SimilarNeighbor]) -> list[SimilarNeighbor]:
+        """Keep the strongest neighbor per date so one shock day does not dominate evidence."""
+        best_by_date: dict[pd.Timestamp, SimilarNeighbor] = {}
+        for neighbor in neighbors:
+            key = pd.Timestamp(neighbor.date).normalize()
+            current = best_by_date.get(key)
+            if current is None or neighbor.similarity > current.similarity:
+                best_by_date[key] = neighbor
+        return sorted(best_by_date.values(), key=lambda n: n.similarity, reverse=True)
+
     def run(self, input_data: SimilarityQuery) -> SimilarityResult:
         if not self._fitted:
             raise RuntimeError("SimilarityEngine이 아직 build/load 되지 않았습니다.")
@@ -79,22 +89,23 @@ class CosineKnnSimilarityEngine(SimilarityEngineInterface):
             )
             result = result[~too_close]
         result = result.sort_values("similarity", ascending=False).head(k).reset_index(drop=True)
-        neighbors: list[SimilarNeighbor] = []
+        raw_neighbors: list[SimilarNeighbor] = []
         for _, row in result.iterrows():
             labels = {key: float(row[key]) for key in LABEL_KEYS if key in row and pd.notna(row[key])}
-            neighbors.append(SimilarNeighbor(
+            raw_neighbors.append(SimilarNeighbor(
                 ticker=str(row["ticker"]),
                 date=pd.Timestamp(row["date"]).date(),
                 similarity=float(row["similarity"]),
                 labels=labels,
             ))
-        if not neighbors:
-            return SimilarityResult(fv.ticker, fv.as_of, [], 0, 0.0, 0.0, 0.0)
+        if not raw_neighbors:
+            return SimilarityResult(fv.ticker, fv.as_of, [], 0, 0.0, 0.0, 0, 0.0)
+        neighbors = self._dedupe_by_date(raw_neighbors)
         n_similar = sum(1 for n in neighbors if n.similarity >= input_data.similarity_threshold)
         hit_rate_5d = float(np.mean([n.labels.get("hit_5pct_5d", 0.0) for n in neighbors]))
         hit_rate_10d = float(np.mean([n.labels.get("hit_10pct_10d", 0.0) for n in neighbors]))
         avg_similarity = float(np.mean([n.similarity for n in neighbors]))
-        return SimilarityResult(fv.ticker, fv.as_of, neighbors, n_similar, hit_rate_5d, hit_rate_10d, avg_similarity)
+        return SimilarityResult(fv.ticker, fv.as_of, neighbors, n_similar, hit_rate_5d, hit_rate_10d, len(neighbors), avg_similarity)
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)

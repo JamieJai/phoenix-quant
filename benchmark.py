@@ -1871,8 +1871,12 @@ def run_train_test_validation(app_config: AppConfig, bench: BenchmarkConfig) -> 
         oos_df = oos_df.sort_values(["portfolio_p_value", "portfolio_alpha", "portfolio_mdd"], ascending=[True, False, True]).reset_index(drop=True)
         oos_df.insert(0, "oos_rank", range(1, len(oos_df) + 1))
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = os.path.join(app_config.reports_dir, f"benchmark_train_test_{stamp}")
+    if bench.resume_dir:
+        out_dir = bench.resume_dir
+        print(f"  [resume] final output dir: {out_dir}")
+    else:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.join(app_config.reports_dir, f"benchmark_train_test_{stamp}")
     os.makedirs(out_dir, exist_ok=True)
     paths = {
         "train_test_summary": os.path.join(out_dir, "benchmark_train_test_summary.csv"),
@@ -1961,6 +1965,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-end", default=None, help="Test 종료일 YYYY-MM-DD")
     p.add_argument("--embargo-trading-days", type=int, default=10, help="Train end 이후 제외할 거래일 수")
     p.add_argument("--train-top-k-rules", type=int, default=5, help="Train grid 상위 K개 룰을 Test에 고정 평가")
+    p.set_defaults(
+        top_n=5,
+        top_list="5,10",
+        min_dollar_volume=5_000_000.0,
+        max_gap_open=0.08,
+    )
     return p
 
 

@@ -30,6 +30,7 @@ from phoenix_core.models import (
     PatternEngineInput,
     SectorRotationInput,
     SimilarityQuery,
+    SimilarityResult,
 )
 from phoenix_core.pipeline import build_pattern_records, build_trade_plan
 from phoenix_core.registry import EngineRegistry
@@ -110,6 +111,7 @@ def main():
     sim = similarity_engine.run(SimilarityQuery(feature_vector=fv, k=30, exclude_ticker=target))
     assert len(sim.neighbors) > 0
     assert 0 <= sim.hit_rate_5d <= 1
+    assert sim.n_unique_dates <= len(sim.neighbors)
     print("similarity ok", sim.n_similar, sim.hit_rate_5d)
 
     context_engine = EngineRegistry.get("context_engine", "market_v1")
@@ -145,10 +147,22 @@ def main():
     assert corr_full.correlations == corr_sliced.correlations
     print("as_of defensive slicing ok")
 
-    decision_engine = EngineRegistry.get("decision_engine", "weighted_v1")
-    decision = decision_engine.run(DecisionInput(target, fv.as_of, pattern, sim, ctx, fv))
+    decision_engine = EngineRegistry.get("decision_engine", "weighted_v1", min_trades_for_confidence=10)
+    sim_dedup = SimilarityResult(
+        query_ticker=target,
+        query_date=fv.as_of,
+        neighbors=sim.neighbors,
+        n_similar=12,
+        hit_rate_5d=0.5,
+        hit_rate_10d=0.4,
+        n_unique_dates=3,
+        avg_similarity=0.6,
+    )
+    decision = decision_engine.run(DecisionInput(target, fv.as_of, pattern, sim_dedup, ctx, fv))
     assert 0 <= decision.suitability_score <= 100
     assert 0 <= decision.confidence_score <= 100
+    assert decision.sub_scores["n_unique_dates"] == 3.0
+    assert decision.confidence_breakdown["similar_case_count"] == 10.5
     explanation = EngineRegistry.get("explain_engine", "template_v1").run(decision)
     assert "과거 유사 사례" in explanation
     print("decision/explain ok", decision.suitability_score, explanation)
@@ -157,6 +171,21 @@ def main():
     result = backtest.evaluate(records, decision_fn=lambda r: r.feature_vector.values["ret_20d"] > 0.05)
     assert result.n_records > 0
     print("backtest ok", result.n_trades, result.hit_rate)
+
+    experiment_engine = EngineRegistry.get("experiment_engine", "xgb_compare", cv=4, metric="accuracy", random_state=42)
+    exp_rows = []
+    for r in records:
+        row = {"as_of": pd.Timestamp(r.date)}
+        row.update(r.feature_vector.values)
+        row["label"] = int(float(r.forward_labels.get("hit_5pct_5d", 0.0)) > 0.0)
+        exp_rows.append(row)
+    exp_df = pd.DataFrame(exp_rows).sort_values("as_of").reset_index(drop=True)
+    exp_X = exp_df[BASELINE_FEATURE_NAMES]
+    exp_y = exp_df["label"]
+    exp_result = experiment_engine.compare(exp_X, exp_y, BASELINE_FEATURE_NAMES[:4], BASELINE_FEATURE_NAMES[4:7], experiment_name="xgb_sanity")
+    assert exp_result.metric_name == "accuracy"
+    assert exp_result.candidate_metric >= 0.0
+    print("xgb experiment ok", exp_result.baseline_metric, exp_result.candidate_metric, exp_result.delta)
 
     intraday_features = build_intraday_feature_dict(
         gap_prev_close_pct=1.2,
@@ -291,6 +320,15 @@ Rank | Ticker | Suitability | Confidence | Risk | Market | Sector | Pattern Rari
 """
     compact_rank = compact_ranking_output(ranking_text, max_rows=2)
     assert "NVDA" in compact_rank and "AMD" in compact_rank and "Rank | Ticker" in compact_rank
+
+    xgb_ranking_text = """Phoenix Quant v2.1.1 Ranking
+湲곗??? 2024-01-02
+Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label
+ 1 | NVDA   |  74.2 |  81.0 |  71.2 |  88.0 |  31.5 |  60.0 | $ 100.00 | $ 105.00 | $  97.00 |  5d |    42% | 愿??
+ 2 | AMD    |  65.1 |  72.0 |  62.1 |  81.0 |  44.0 |  58.0 | $ 100.00 | $ 105.00 | $  97.00 |  5d |    35% | 愿??
+"""
+    compact_xgb_rank = compact_ranking_output(xgb_ranking_text, max_rows=2)
+    assert "final" in compact_xgb_rank and "xgb" in compact_xgb_rank and "NVDA" in compact_xgb_rank
 
     analysis_text = """Phoenix Quant v1.2
 Ticker: NVDA

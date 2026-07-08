@@ -87,7 +87,7 @@ class WeightedDecisionEngine(DecisionEngineInterface):
         suitability = _clip100(suitability_raw)
 
         # 3) 신뢰도. 유사 사례 수, 평균 유사도, 시장 명확성, 데이터 안정성의 합산.
-        n = int(input_data.similarity.n_similar)
+        n = int(getattr(input_data.similarity, "n_unique_dates", 0) or input_data.similarity.n_similar)
         n_component = _clip100(100.0 * min(n / self.min_trades_for_confidence, 1.0))
         sim_component = _clip100(input_data.similarity.avg_similarity * 100.0)
         regime_component = 75.0 if input_data.market_context.regime in {"bull", "neutral"} else 45.0
@@ -123,6 +123,7 @@ class WeightedDecisionEngine(DecisionEngineInterface):
                 "vix_level": vix,
                 "volatility_20d": vol,
                 "n_similar": float(n),
+                "n_unique_dates": float(getattr(input_data.similarity, "n_unique_dates", n)),
                 "avg_similarity": float(input_data.similarity.avg_similarity),
             },
             score_breakdown=score_breakdown,
