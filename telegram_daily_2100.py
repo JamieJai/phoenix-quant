@@ -22,15 +22,29 @@ def _send(text):
             for cid in p.allowed_chat_ids: send_long_message_with_token(p.token,cid,text)
     else:
         TelegramSender().broadcast_message(text,chat_ids=_targets())
+def _daily_label() -> str:
+    return os.getenv('PHOENIX_DAILY_LABEL', '18:00 Daily Top').strip() or '18:00 Daily Top'
+
+
+def _daily_hour() -> int:
+    raw = os.getenv('PHOENIX_DAILY_HOUR', '18').strip()
+    try:
+        hour = int(raw)
+    except ValueError:
+        return 18
+    return max(0, min(hour, 23))
+
+
 def run_daily_once():
     load_env_file('.env')
     project_dir=Path(os.getenv('PHOENIX_PROJECT_DIR','.')).resolve(); py=os.getenv('PHOENIX_PYTHON',sys.executable)
     timeout=int(os.getenv('PHOENIX_DAILY_TIMEOUT',os.getenv('PHOENIX_COMMAND_TIMEOUT','600')))
     top_n=int(os.getenv('PHOENIX_DAILY_TOP_N',os.getenv('PHOENIX_TOP_N','5'))); scan_n=int(os.getenv('PHOENIX_DAILY_SCAN_N',str(top_n)))
-    refresh=_env_bool('PHOENIX_DAILY_REFRESH',True); intraday=_env_bool('PHOENIX_INTRADAY_ENABLED',True); overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(top_n))); overlay_rerank=_env_bool('PHOENIX_INTRADAY_OVERLAY_RERANK',True)
+    refresh=_env_bool('PHOENIX_DAILY_REFRESH',True); intraday=_env_bool('PHOENIX_DAILY_INTRADAY_OVERLAY',False); overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(top_n))); overlay_rerank=_env_bool('PHOENIX_INTRADAY_OVERLAY_RERANK',True)
     cmd=[py,'main.py','--top','--top-n',str(scan_n)]
     if refresh: cmd.append('--refresh')
-    _send(f'{header(f"21:00 Daily Top {top_n} 실행 시작")}\n\n분석 중입니다...')
+    label=_daily_label()
+    _send(f'{header(f"{label} {top_n} 실행 시작")}\n\n분석 중입니다...')
     env=os.environ.copy(); env['PYTHONUTF8']='1'; env['PYTHONIOENCODING']='utf-8'
     proc=subprocess.run(cmd,cwd=str(project_dir),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,env=env,shell=False)
     out=(proc.stdout or '') + (('\n[stderr]\n'+proc.stderr) if proc.stderr else '')
@@ -47,14 +61,14 @@ def run_daily_once():
                 except Exception as e:
                     print(f'intraday feature cache warning: {e!r}')
             extra='\n\n'+format_intraday_overlay(contexts,max_items=overlay_max,rerank=overlay_rerank)
-    title=f'21:00 Daily Top {top_n}'
+    title=f'{label} {top_n}'
     msg=f'{header(title)}\n\n⚠️ Phoenix 실행 실패 code={proc.returncode}\n\n{out}\n\n{disclaimer()}' if proc.returncode else f'{header(title)}\n\n{out}{extra}\n\n{disclaimer()}'
     _send(msg)
 def run_loop():
-    last=None; print('Daily 21:00 KST scheduler started. Ctrl+C to stop.')
+    last=None; hour=_daily_hour(); print(f'Daily {hour:02d}:00 KST scheduler started. Ctrl+C to stop.')
     while True:
         now=datetime.now(KST); today=now.strftime('%Y-%m-%d')
-        if now.hour==21 and now.minute==0 and last!=today:
+        if now.hour==hour and now.minute==0 and last!=today:
             try: run_daily_once(); last=today
             except Exception as e: _send(f'⚠️ Daily job error\n\n{type(e).__name__}: {e}'); last=today
         time.sleep(20)

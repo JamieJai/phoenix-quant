@@ -12,7 +12,7 @@ Phoenix Quant는 미국 주식 후보를 일봉 기반 통계 분석과 장중 �
 주요 목적은 다음과 같습니다.
 
 ```text
-1. 매일 한국시간 21:00에 미국 주식 관심 후보 Top 5를 Telegram으로 발송
+1. 매일 한국시간 18:00에 미국 주식 관심 후보 Top 5를 Telegram으로 발송
 2. Telegram 명령어로 특정 티커를 즉시 분석
 3. 일봉 기반 Phoenix Score와 장중 Intraday Context를 함께 제공
 4. A/B/C 여러 사용자가 같은 봇 또는 각자 다른 봇으로 사용할 수 있게 지원
@@ -73,14 +73,13 @@ Compact Analyze Hotfix: v2.1.1
 
 ### 3.1 Daily Top 5 알림
 
-매일 한국시간 21:00에 후보 종목 Top 5를 Telegram으로 전송합니다.
+매일 한국시간 18:00에 후보 종목 Top 5를 Telegram으로 전송합니다.
 
 ```text
-한국시간 21:00
+한국시간 18:00
 → main.py --top --top-n 5 --refresh 실행
 → Top 후보 추출
-→ Intraday Overlay 추가
-→ Telegram 발송
+→ 기본 Telegram 메시지 발송
 ```
 
 systemd timer 기준:
@@ -521,7 +520,7 @@ journalctl -u phoenix-telegram-bot -f
 
 ---
 
-### 10.2 Daily 21:00 Top 5 timer
+### 10.2 Daily 18:00 Top 5 timer
 
 서버 타임존을 한국시간으로 설정합니다.
 
@@ -541,7 +540,7 @@ PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 
 sudo tee /etc/systemd/system/phoenix-daily-alert.service > /dev/null <<EOF2
 [Unit]
-Description=Phoenix Quant Daily 21:00 Top 5 Alert
+Description=Phoenix Quant Daily 18:00 Top 5 Alert
 After=network-online.target
 Wants=network-online.target
 
@@ -555,10 +554,10 @@ EOF2
 
 sudo tee /etc/systemd/system/phoenix-daily-alert.timer > /dev/null <<EOF2
 [Unit]
-Description=Run Phoenix Quant Daily Alert every day at 21:00 KST
+Description=Run Phoenix Quant Daily Alert every day at 18:00 KST
 
 [Timer]
-OnCalendar=*-*-* 21:00:00
+OnCalendar=*-*-* 18:00:00
 Persistent=true
 Unit=phoenix-daily-alert.service
 
