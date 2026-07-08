@@ -215,11 +215,19 @@ def _future_result(full_raw: Dict[str, pd.DataFrame], ticker: str, as_of_date, h
         fut = df.iloc[loc + 1: loc + 1 + h]
         if len(fut) < h or close <= 0:
             result[f"fwd_max_ret_{h}d"] = np.nan
+            result[f"fwd_close_ret_{h}d"] = np.nan
+            result[f"fwd_min_ret_{h}d"] = np.nan
             continue
         max_high = float(fut["High"].max())
+        min_low = float(fut["Low"].min())
+        exit_close = float(fut.iloc[-1]["Close"])
         result[f"fwd_max_ret_{h}d"] = (max_high - close) / close
+        result[f"fwd_close_ret_{h}d"] = (exit_close - close) / close
+        result[f"fwd_min_ret_{h}d"] = (min_low - close) / close
     result["hit_5pct_5d"] = 1.0 if result.get("fwd_max_ret_5d", np.nan) >= 0.05 else (np.nan if pd.isna(result.get("fwd_max_ret_5d", np.nan)) else 0.0)
     result["hit_10pct_10d"] = 1.0 if result.get("fwd_max_ret_10d", np.nan) >= 0.10 else (np.nan if pd.isna(result.get("fwd_max_ret_10d", np.nan)) else 0.0)
+    result["close_hit_5pct_5d"] = 1.0 if result.get("fwd_close_ret_5d", np.nan) >= 0.05 else (np.nan if pd.isna(result.get("fwd_close_ret_5d", np.nan)) else 0.0)
+    result["close_hit_10pct_10d"] = 1.0 if result.get("fwd_close_ret_10d", np.nan) >= 0.10 else (np.nan if pd.isna(result.get("fwd_close_ret_10d", np.nan)) else 0.0)
     return result
 
 
@@ -251,8 +259,14 @@ def _row_from_decision(rank: int, decision, meta: Dict[str, Any], full_raw: Dict
         "avg_similarity": decision.sub_scores.get("avg_similarity", np.nan),
         "fwd_max_ret_5d": future.get("fwd_max_ret_5d", np.nan),
         "fwd_max_ret_10d": future.get("fwd_max_ret_10d", np.nan),
+        "fwd_close_ret_5d": future.get("fwd_close_ret_5d", np.nan),
+        "fwd_close_ret_10d": future.get("fwd_close_ret_10d", np.nan),
+        "fwd_min_ret_5d": future.get("fwd_min_ret_5d", np.nan),
+        "fwd_min_ret_10d": future.get("fwd_min_ret_10d", np.nan),
         "hit_5pct_5d": future.get("hit_5pct_5d", np.nan),
         "hit_10pct_10d": future.get("hit_10pct_10d", np.nan),
+        "close_hit_5pct_5d": future.get("close_hit_5pct_5d", np.nan),
+        "close_hit_10pct_10d": future.get("close_hit_10pct_10d", np.nan),
     }
 
 
@@ -267,6 +281,12 @@ def _summarize_rows(rows: List[Dict[str, Any]], top_n: int) -> Dict[str, Any]:
             "hit_10pct_10d_rate": 0.0,
             "avg_fwd_max_ret_5d": 0.0,
             "avg_fwd_max_ret_10d": 0.0,
+            "close_hit_5pct_5d_rate": 0.0,
+            "close_hit_10pct_10d_rate": 0.0,
+            "avg_fwd_close_ret_5d": 0.0,
+            "avg_fwd_close_ret_10d": 0.0,
+            "avg_fwd_min_ret_5d": 0.0,
+            "avg_fwd_min_ret_10d": 0.0,
             "sharpe_5d": 0.0,
             "mdd_5d": 0.0,
             "profit_factor_5d": 0.0,
@@ -279,6 +299,12 @@ def _summarize_rows(rows: List[Dict[str, Any]], top_n: int) -> Dict[str, Any]:
         "hit_10pct_10d_rate": float(pd.to_numeric(df["hit_10pct_10d"], errors="coerce").mean()),
         "avg_fwd_max_ret_5d": float(pd.to_numeric(df["fwd_max_ret_5d"], errors="coerce").mean()),
         "avg_fwd_max_ret_10d": float(pd.to_numeric(df["fwd_max_ret_10d"], errors="coerce").mean()),
+        "close_hit_5pct_5d_rate": float(pd.to_numeric(df["close_hit_5pct_5d"], errors="coerce").mean()),
+        "close_hit_10pct_10d_rate": float(pd.to_numeric(df["close_hit_10pct_10d"], errors="coerce").mean()),
+        "avg_fwd_close_ret_5d": float(pd.to_numeric(df["fwd_close_ret_5d"], errors="coerce").mean()),
+        "avg_fwd_close_ret_10d": float(pd.to_numeric(df["fwd_close_ret_10d"], errors="coerce").mean()),
+        "avg_fwd_min_ret_5d": float(pd.to_numeric(df["fwd_min_ret_5d"], errors="coerce").mean()),
+        "avg_fwd_min_ret_10d": float(pd.to_numeric(df["fwd_min_ret_10d"], errors="coerce").mean()),
         "sharpe_5d": _sharpe(pd.to_numeric(df["fwd_max_ret_5d"], errors="coerce")),
         "mdd_5d": _max_drawdown(pd.to_numeric(df["fwd_max_ret_5d"], errors="coerce")),
         "profit_factor_5d": _profit_factor(pd.to_numeric(df["fwd_max_ret_5d"], errors="coerce")),
@@ -372,6 +398,14 @@ def _random_baseline_summary(
             "random_hit_10pct_10d_std": float(mdf["hit_10pct_10d_rate"].std(ddof=0)),
             "random_avg_fwd5_mean": float(mdf["avg_fwd_max_ret_5d"].mean()),
             "random_avg_fwd10_mean": float(mdf["avg_fwd_max_ret_10d"].mean()),
+            "random_close_hit_5pct_5d_mean": float(mdf["close_hit_5pct_5d_rate"].mean()),
+            "random_close_hit_5pct_5d_std": float(mdf["close_hit_5pct_5d_rate"].std(ddof=0)),
+            "random_close_hit_10pct_10d_mean": float(mdf["close_hit_10pct_10d_rate"].mean()),
+            "random_close_hit_10pct_10d_std": float(mdf["close_hit_10pct_10d_rate"].std(ddof=0)),
+            "random_avg_fwd_close5_mean": float(mdf["avg_fwd_close_ret_5d"].mean()),
+            "random_avg_fwd_close10_mean": float(mdf["avg_fwd_close_ret_10d"].mean()),
+            "random_avg_fwd_min5_mean": float(mdf["avg_fwd_min_ret_5d"].mean()),
+            "random_avg_fwd_min10_mean": float(mdf["avg_fwd_min_ret_10d"].mean()),
             "random_sharpe_5d_mean": float(mdf["sharpe_5d"].mean()),
             "random_mdd_5d_mean": float(mdf["mdd_5d"].mean()),
             "random_profit_factor_5d_mean": float(mdf["profit_factor_5d"].replace(999.0, np.nan).mean()),
@@ -390,6 +424,12 @@ def _merge_alpha_summary(top_summary: pd.DataFrame, random_summary: pd.DataFrame
         out["alpha_hit_10pct_10d"] = out["hit_10pct_10d_rate"] - out["random_hit_10pct_10d_mean"]
         out["alpha_avg_fwd5"] = out["avg_fwd_max_ret_5d"] - out["random_avg_fwd5_mean"]
         out["alpha_avg_fwd10"] = out["avg_fwd_max_ret_10d"] - out["random_avg_fwd10_mean"]
+        out["alpha_close_hit_5pct_5d"] = out["close_hit_5pct_5d_rate"] - out["random_close_hit_5pct_5d_mean"]
+        out["alpha_close_hit_10pct_10d"] = out["close_hit_10pct_10d_rate"] - out["random_close_hit_10pct_10d_mean"]
+        out["alpha_avg_fwd_close5"] = out["avg_fwd_close_ret_5d"] - out["random_avg_fwd_close5_mean"]
+        out["alpha_avg_fwd_close10"] = out["avg_fwd_close_ret_10d"] - out["random_avg_fwd_close10_mean"]
+        out["alpha_avg_fwd_min5"] = out["avg_fwd_min_ret_5d"] - out["random_avg_fwd_min5_mean"]
+        out["alpha_avg_fwd_min10"] = out["avg_fwd_min_ret_10d"] - out["random_avg_fwd_min10_mean"]
     return out
 
 
@@ -1150,6 +1190,12 @@ def _run_statistical_validation(
             ("hit_10pct_10d", "hit_10pct_10d_rate"),
             ("fwd_max_ret_5d", "avg_fwd_max_ret_5d"),
             ("fwd_max_ret_10d", "avg_fwd_max_ret_10d"),
+            ("close_hit_5pct_5d", "close_hit_5pct_5d_rate"),
+            ("close_hit_10pct_10d", "close_hit_10pct_10d_rate"),
+            ("fwd_close_ret_5d", "avg_fwd_close_ret_5d"),
+            ("fwd_close_ret_10d", "avg_fwd_close_ret_10d"),
+            ("fwd_min_ret_5d", "avg_fwd_min_ret_5d"),
+            ("fwd_min_ret_10d", "avg_fwd_min_ret_10d"),
         ]
         for value_col, metric_name in metric_map:
             baseline_values = random_dist[metric_name] if not random_dist.empty and metric_name in random_dist.columns else None
@@ -1277,6 +1323,9 @@ code {{ background: #f5f5f5; padding: 2px 5px; border-radius: 4px; }}
   <div class="kpi">10D +10% Hit Rate<b>{_pct(summary.get('hit_10pct_10d_rate'))}</b></div>
   <div class="kpi">Avg 5D Max Return<b>{_pct(summary.get('avg_fwd_max_ret_5d'))}</b></div>
   <div class="kpi">Avg 10D Max Return<b>{_pct(summary.get('avg_fwd_max_ret_10d'))}</b></div>
+  <div class="kpi">5D Close +5% Hit<b>{_pct(summary.get('close_hit_5pct_5d_rate'))}</b></div>
+  <div class="kpi">Avg 5D Close Return<b>{_pct(summary.get('avg_fwd_close_ret_5d'))}</b></div>
+  <div class="kpi">Avg 5D Worst Low<b>{_pct(summary.get('avg_fwd_min_ret_5d'))}</b></div>
   <div class="kpi">Sharpe 5D<b>{_fmt(summary.get('sharpe_5d'))}</b></div>
   <div class="kpi">MDD 5D<b>{_pct(summary.get('mdd_5d'))}</b></div>
   <div class="kpi">Trades<b>{summary.get('n_trades', 0)}</b></div>
@@ -1925,6 +1974,10 @@ def main() -> None:
     print(f"10D +10% Hit Rate: {_pct(s['hit_10pct_10d_rate'])}")
     print(f"평균 5D 최대상승률: {_pct(s['avg_fwd_max_ret_5d'])}")
     print(f"평균 10D 최대상승률: {_pct(s['avg_fwd_max_ret_10d'])}")
+    print(f"5D 종가 +5% Hit Rate: {_pct(s.get('close_hit_5pct_5d_rate'))}")
+    print(f"10D 종가 +10% Hit Rate: {_pct(s.get('close_hit_10pct_10d_rate'))}")
+    print(f"평균 5D 종가수익률: {_pct(s.get('avg_fwd_close_ret_5d'))} / 평균 5D 최저낙폭: {_pct(s.get('avg_fwd_min_ret_5d'))}")
+    print(f"평균 10D 종가수익률: {_pct(s.get('avg_fwd_close_ret_10d'))} / 평균 10D 최저낙폭: {_pct(s.get('avg_fwd_min_ret_10d'))}")
     print(f"Sharpe 5D: {_fmt(s['sharpe_5d'])} / MDD 5D: {_pct(s['mdd_5d'])} / Profit Factor 5D: {_fmt(s['profit_factor_5d'])}")
 
     alpha_df = result.get("alpha")
@@ -1937,6 +1990,10 @@ def main() -> None:
             if pd.notna(row.get("random_hit_5pct_5d_mean", np.nan)):
                 msg += f" / Random {_pct(row.get('random_hit_5pct_5d_mean'))} / Alpha {_pct(row.get('alpha_hit_5pct_5d'))}"
             msg += f" / Avg5D {_pct(row.get('avg_fwd_max_ret_5d'))}"
+            if pd.notna(row.get("close_hit_5pct_5d_rate", np.nan)):
+                msg += f" / CloseHit5D {_pct(row.get('close_hit_5pct_5d_rate'))}"
+            if pd.notna(row.get("avg_fwd_min_ret_5d", np.nan)):
+                msg += f" / WorstLow5D {_pct(row.get('avg_fwd_min_ret_5d'))}"
             print(msg)
 
     trade_summary_df = result.get("trade_summary")
