@@ -10,6 +10,12 @@ from ..models import ContextEngineInput, MarketContext
 from ..registry import EngineRegistry
 
 
+def _asof_frame(df: pd.DataFrame, as_of) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df[df.index <= pd.Timestamp(as_of)].copy()
+
+
 def _trend(df: pd.DataFrame, window: int = 20) -> float:
     d = df.sort_index().dropna(subset=["Close"])
     if len(d) < window + 1:
@@ -33,7 +39,10 @@ class MarketContextEngine(ContextEngineInterface):
     name = "market_v1"
 
     def run(self, input_data: ContextEngineInput) -> MarketContext:
-        data: Dict[str, pd.DataFrame] = input_data.market_ohlcv
+        data: Dict[str, pd.DataFrame] = {
+            ticker: _asof_frame(df, input_data.as_of)
+            for ticker, df in input_data.market_ohlcv.items()
+        }
         spy_t = _trend(data["SPY"]) if "SPY" in data else 0.0
         qqq_t = _trend(data["QQQ"]) if "QQQ" in data else 0.0
         sector_t = _trend(data[input_data.sector_etf]) if input_data.sector_etf and input_data.sector_etf in data else qqq_t

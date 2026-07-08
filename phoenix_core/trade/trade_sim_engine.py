@@ -82,6 +82,7 @@ class TradeSimulationEngine:
         hit_tp = False
         hit_sl = False
         hit_tr = False
+        exit_hold_days = 0
 
         for hold_i, (dt, row) in enumerate(future.iterrows(), start=1):
             day_open = float(row["open"])
@@ -108,6 +109,7 @@ class TradeSimulationEngine:
                 exit_reason = reason
                 exit_price = float(px)
                 exit_date = dt.date()
+                exit_hold_days = hold_i
                 hit_tp = reason == ExitReason.TAKE_PROFIT
                 hit_sl = reason == ExitReason.STOP_LOSS
                 hit_tr = reason == ExitReason.TRAILING_STOP
@@ -118,11 +120,14 @@ class TradeSimulationEngine:
                 exit_reason = ExitReason.TIME_EXIT
                 exit_price = day_close
                 exit_date = dt.date()
+                exit_hold_days = hold_i
                 break
+        if exit_hold_days == 0:
+            exit_hold_days = int(len(future))
 
         gross_return = (exit_price / entry_price) - 1.0
         net_return = apply_costs(gross_return, cfg)
-        hold_days = max(0, (pd.Timestamp(exit_date) - pd.Timestamp(entry_date)).days)
+        hold_days = max(0, exit_hold_days)
         max_high_return = (highest_price / entry_price) - 1.0
         max_low_return = (lowest_price / entry_price) - 1.0
 

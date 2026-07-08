@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from phoenix_core.engines.intraday_context_engine import IntradayContextEngine
+from phoenix_core.intraday_feature_store import append_intraday_feature_rows, default_intraday_feature_cache_path
 from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_context, format_intraday_overlay
 from phoenix_core.services.telegram_message_formatter import compact_cli_output, disclaimer, header, help_message
 from phoenix_core.services.telegram_sender import load_env_file, parse_chat_ids, send_chat_action_with_token, send_long_message_with_token, telegram_api
@@ -40,6 +41,9 @@ class PhoenixTelegramBot:
         self.refresh_on_analyze=_env_bool('PHOENIX_REFRESH_ON_ANALYZE',False); self.refresh_on_top=_env_bool('PHOENIX_REFRESH_ON_TOP',False)
         self.intraday_enabled=_env_bool('PHOENIX_INTRADAY_ENABLED',True); self.overlay_enabled=_env_bool('PHOENIX_TOP_INTRADAY_OVERLAY',True)
         self.overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(self.default_top_n)))
+        self.intraday_feature_cache_enabled=_env_bool('PHOENIX_INTRADAY_FEATURE_CACHE',True)
+        self.intraday_feature_cache_path=os.getenv('PHOENIX_INTRADAY_FEATURE_CACHE_PATH',default_intraday_feature_cache_path('data'))
+        self.intraday_overlay_rerank=_env_bool('PHOENIX_INTRADAY_OVERLAY_RERANK',True)
         self.intraday_engine=IntradayContextEngine(
             intraday_period=os.getenv('PHOENIX_INTRADAY_PERIOD','5d'), interval_10m=os.getenv('PHOENIX_INTRADAY_INTERVAL_10M','10m'),
             interval_30m=os.getenv('PHOENIX_INTRADAY_INTERVAL_30M','30m'), include_prepost=_env_bool('PHOENIX_INTRADAY_PREPOST',True))
@@ -91,7 +95,7 @@ class PhoenixTelegramBot:
         if cmd in {'/start','/help'}: return help_message()
         if cmd=='/ping': return 'pong ✅'
         if cmd=='/status':
-            return f'Phoenix Bot Status\n\nbot_profile: {profile.name}\nyour_chat_id: {chat_id}\nproject_dir: {self.project_dir}\npython: {self.python_exe}\ntimeout_sec: {self.timeout_sec}\ndefault_top_n: {self.default_top_n}\nintraday_enabled: {self.intraday_enabled}\nintraday_overlay: {self.overlay_enabled}'
+            return f'Phoenix Bot Status\n\nbot_profile: {profile.name}\nyour_chat_id: {chat_id}\nproject_dir: {self.project_dir}\npython: {self.python_exe}\ntimeout_sec: {self.timeout_sec}\ndefault_top_n: {self.default_top_n}\nintraday_enabled: {self.intraday_enabled}\nintraday_overlay: {self.overlay_enabled}\nintraday_overlay_rerank: {self.intraday_overlay_rerank}'
         if cmd=='/top': return self._cmd_top(args,chat_id,profile)
         if cmd=='/analyze': return self._cmd_analyze(args,chat_id,profile)
         if cmd=='/intraday': return self._cmd_intraday(args,chat_id,profile)
@@ -108,7 +112,10 @@ class PhoenixTelegramBot:
         extra=''
         if self.intraday_enabled and self.overlay_enabled:
             tickers=extract_candidate_tickers(out,limit=self.overlay_max)
-            if tickers: extra='\n\n'+format_intraday_overlay(self.intraday_engine.analyze_many(tickers),self.overlay_max)
+            if tickers:
+                contexts=self.intraday_engine.analyze_many(tickers)
+                self._record_intraday_contexts(contexts)
+                extra='\n\n'+format_intraday_overlay(contexts,self.overlay_max,rerank=self.intraday_overlay_rerank)
         return f'{header(f"Top {top_n} 후보")}\n\n{out}{extra}\n\n{disclaimer()}'
     def _cmd_analyze(self,args,chat_id,p):
         if not args: return '사용법: /analyze NVDA'
@@ -118,18 +125,35 @@ class PhoenixTelegramBot:
         cmd=[self.python_exe,'main.py','--ticker',ticker]
         if refresh: cmd.append('--refresh')
         send_chat_action_with_token(p.token,chat_id,'typing'); out=self._run(cmd)
-        extra='\n\n'+format_intraday_context(self.intraday_engine.analyze(ticker)) if self.intraday_enabled else ''
+        extra=''
+        if self.intraday_enabled:
+            ctx=self.intraday_engine.analyze(ticker)
+            self._record_intraday_contexts([ctx])
+            extra='\n\n'+format_intraday_context(ctx)
         return f'{header(f"{ticker} 상세 분석")}\n\n{out}{extra}\n\n{disclaimer()}'
     def _cmd_intraday(self,args,chat_id,p):
         if not args: return '사용법: /intraday NVDA'
         ticker=args[0].upper().strip()
         if not TICKER_RE.match(ticker): return '티커 형식이 이상해. 예: /intraday NVDA'
         send_chat_action_with_token(p.token,chat_id,'typing')
-        return f'{header(f"{ticker} Intraday")}\n\n{format_intraday_context(self.intraday_engine.analyze(ticker))}\n\n{disclaimer()}'
+        ctx=self.intraday_engine.analyze(ticker)
+        self._record_intraday_contexts([ctx])
+        return f'{header(f"{ticker} Intraday")}\n\n{format_intraday_context(ctx)}\n\n{disclaimer()}'
     def _cmd_regime(self,chat_id,p):
         send_chat_action_with_token(p.token,chat_id,'typing'); out=self._run([self.python_exe,'main.py','--ticker','SPY'])
-        extra='\n\n'+format_intraday_context(self.intraday_engine.analyze('SPY')) if self.intraday_enabled else ''
+        extra=''
+        if self.intraday_enabled:
+            ctx=self.intraday_engine.analyze('SPY')
+            self._record_intraday_contexts([ctx])
+            extra='\n\n'+format_intraday_context(ctx)
         return f'{header("시장 국면 참고 분석 - SPY")}\n\n{out}{extra}\n\n{disclaimer()}'
+    def _record_intraday_contexts(self,contexts):
+        if not self.intraday_feature_cache_enabled:
+            return
+        try:
+            append_intraday_feature_rows(contexts,self.intraday_feature_cache_path)
+        except Exception as e:
+            print(f'intraday feature cache warning: {e!r}')
     def _run(self,cmd):
         env=os.environ.copy(); env['PYTHONUTF8']='1'; env['PYTHONIOENCODING']='utf-8'
         proc=subprocess.run(cmd,cwd=str(self.project_dir),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=self.timeout_sec,env=env,shell=False)

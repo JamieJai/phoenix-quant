@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -13,16 +14,24 @@ from phoenix_core import bootstrap
 from phoenix_core.config import load_config
 from phoenix_core.default_features import BASELINE_FEATURE_NAMES
 from phoenix_core.engines.feature_engine import CatalogFeatureEngine
+from phoenix_core.engines.intraday_context_engine import IntradayContext
 from phoenix_core.labels import compute_forward_labels
+from phoenix_core.intraday_features import INTRADAY_FEATURE_NAMES, build_intraday_feature_dict
+from phoenix_core.intraday_feature_store import append_intraday_feature_rows, load_intraday_feature_cache
+from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
 from phoenix_core.models import (
+    CorrelationInput,
     ContextEngineInput,
     DecisionInput,
     FeatureEngineInput,
+    MarketRegimeInput,
     PatternEngineInput,
+    SectorRotationInput,
     SimilarityQuery,
 )
 from phoenix_core.pipeline import build_pattern_records
 from phoenix_core.registry import EngineRegistry
+from phoenix_core.trade import EntryMode, TradeConfig, TradeSimulationEngine
 
 
 def make_synthetic_ohlcv(n=420, seed=0, drift=0.0004, vol=0.02, start_price=50.0):
@@ -104,6 +113,35 @@ def main():
     context_engine = EngineRegistry.get("context_engine", "market_v1")
     ctx = context_engine.run(ContextEngineInput(as_of=fv.as_of, market_ohlcv=raw, sector_etf="SOXX"))
     assert 0 <= ctx.market_score <= 100
+    print("context ok", ctx.market_score)
+
+    cutoff_date = raw[target].index[250].date()
+    raw_future_changed = {k: v.copy() for k, v in raw.items()}
+    for df in raw_future_changed.values():
+        future_mask = df.index > pd.Timestamp(cutoff_date)
+        df.loc[future_mask, ["Open", "High", "Low", "Close"]] *= 100.0
+        df.loc[future_mask, "Volume"] *= 100.0
+    sliced_raw = {k: v[v.index <= pd.Timestamp(cutoff_date)].copy() for k, v in raw.items()}
+
+    ctx_full = context_engine.run(ContextEngineInput(as_of=cutoff_date, market_ohlcv=raw_future_changed, sector_etf="SOXX"))
+    ctx_sliced = context_engine.run(ContextEngineInput(as_of=cutoff_date, market_ohlcv=sliced_raw, sector_etf="SOXX"))
+    assert np.isclose(ctx_full.market_score, ctx_sliced.market_score)
+
+    regime_engine = EngineRegistry.get("regime_engine", "regime_v1")
+    regime_full = regime_engine.run(MarketRegimeInput(as_of=cutoff_date, market_ohlcv=raw_future_changed))
+    regime_sliced = regime_engine.run(MarketRegimeInput(as_of=cutoff_date, market_ohlcv=sliced_raw))
+    assert regime_full.components == regime_sliced.components
+
+    sector_engine = EngineRegistry.get("sector_rotation_engine", "rotation_v1")
+    sector_full = sector_engine.run(SectorRotationInput(as_of=cutoff_date, market_ohlcv=raw_future_changed, target_sector_etf="SOXX"))
+    sector_sliced = sector_engine.run(SectorRotationInput(as_of=cutoff_date, market_ohlcv=sliced_raw, target_sector_etf="SOXX"))
+    assert [(s.etf, s.score) for s in sector_full.all_strengths] == [(s.etf, s.score) for s in sector_sliced.all_strengths]
+
+    corr_engine = EngineRegistry.get("correlation_engine", "correlation_v1")
+    corr_full = corr_engine.run(CorrelationInput(target, cutoff_date, raw_future_changed, ["SPY", "QQQ", "SOXX"]))
+    corr_sliced = corr_engine.run(CorrelationInput(target, cutoff_date, sliced_raw, ["SPY", "QQQ", "SOXX"]))
+    assert corr_full.correlations == corr_sliced.correlations
+    print("as_of defensive slicing ok")
 
     decision_engine = EngineRegistry.get("decision_engine", "weighted_v1")
     decision = decision_engine.run(DecisionInput(target, fv.as_of, pattern, sim, ctx, fv))
@@ -117,6 +155,144 @@ def main():
     result = backtest.evaluate(records, decision_fn=lambda r: r.feature_vector.values["ret_20d"] > 0.05)
     assert result.n_records > 0
     print("backtest ok", result.n_trades, result.hit_rate)
+
+    intraday_features = build_intraday_feature_dict(
+        gap_prev_close_pct=1.2,
+        session_return_pct=0.8,
+        ret_fast_3bar_pct=0.4,
+        ret_slow_2bar_pct=None,
+        relative_intraday_volume=1.7,
+        vwap_position_pct=0.3,
+        pullback_from_intraday_high_pct=-0.9,
+        intraday_score=62,
+        intraday_risk_score=31,
+    )
+    assert list(intraday_features.keys()) == INTRADAY_FEATURE_NAMES
+    assert np.isnan(intraday_features["ret_slow_2bar_pct"])
+    assert intraday_features["intraday_score"] == 62.0
+    print("intraday feature schema ok", len(intraday_features))
+
+    ctx_sample = IntradayContext(
+        ticker="SYNH",
+        timestamp="2024-01-02T10:30:00",
+        source="synthetic",
+        current_price=101.0,
+        previous_close=100.0,
+        current_vs_prev_close_pct=1.0,
+        day_open=100.5,
+        intraday_return_pct=0.5,
+        latest_10m_return_pct=0.2,
+        latest_30m_return_pct=0.4,
+        today_volume=1_500_000.0,
+        avg_intraday_volume=1_000_000.0,
+        intraday_volume_ratio=1.5,
+        vwap=100.7,
+        vwap_position_pct=0.3,
+        above_vwap=True,
+        intraday_high=102.0,
+        pullback_from_intraday_high_pct=-1.0,
+        intraday_score=62,
+        intraday_risk_score=31,
+        label="POSITIVE_INTRADAY_CONTEXT",
+        notes=[],
+        features=intraday_features,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_path = os.path.join(tmpdir, "intraday_features.csv")
+        assert append_intraday_feature_rows([ctx_sample], cache_path) == 1
+        cache_df = load_intraday_feature_cache(cache_path)
+        assert len(cache_df) == 1
+        assert list(cache_df.columns)[-len(INTRADAY_FEATURE_NAMES):] == INTRADAY_FEATURE_NAMES
+        assert cache_df.iloc[0]["ticker"] == "SYNH"
+    print("intraday feature cache ok")
+
+    weak_first = IntradayContext(
+        ticker="WEAK1",
+        timestamp="2024-01-02T10:30:00",
+        source="synthetic",
+        current_price=100.0,
+        previous_close=100.0,
+        current_vs_prev_close_pct=0.0,
+        day_open=100.0,
+        intraday_return_pct=0.0,
+        latest_10m_return_pct=-0.5,
+        latest_30m_return_pct=-0.7,
+        today_volume=800_000.0,
+        avg_intraday_volume=1_000_000.0,
+        intraday_volume_ratio=0.8,
+        vwap=101.0,
+        vwap_position_pct=-1.0,
+        above_vwap=False,
+        intraday_high=104.0,
+        pullback_from_intraday_high_pct=-3.8,
+        intraday_score=25,
+        intraday_risk_score=75,
+        label="WEAK_INTRADAY_CONTEXT",
+        notes=[],
+        features=build_intraday_feature_dict(
+            gap_prev_close_pct=0.0,
+            session_return_pct=0.0,
+            ret_fast_3bar_pct=-0.5,
+            ret_slow_2bar_pct=-0.7,
+            relative_intraday_volume=0.8,
+            vwap_position_pct=-1.0,
+            pullback_from_intraday_high_pct=-3.8,
+            intraday_score=25,
+            intraday_risk_score=75,
+        ),
+    )
+    strong_second = IntradayContext(
+        ticker="STRG2",
+        timestamp="2024-01-02T10:30:00",
+        source="synthetic",
+        current_price=103.0,
+        previous_close=100.0,
+        current_vs_prev_close_pct=3.0,
+        day_open=101.0,
+        intraday_return_pct=2.0,
+        latest_10m_return_pct=1.4,
+        latest_30m_return_pct=2.5,
+        today_volume=2_500_000.0,
+        avg_intraday_volume=1_000_000.0,
+        intraday_volume_ratio=2.5,
+        vwap=101.5,
+        vwap_position_pct=1.5,
+        above_vwap=True,
+        intraday_high=103.4,
+        pullback_from_intraday_high_pct=-0.4,
+        intraday_score=88,
+        intraday_risk_score=25,
+        label="STRONG_INTRADAY_MOMENTUM",
+        notes=[],
+        features=build_intraday_feature_dict(
+            gap_prev_close_pct=3.0,
+            session_return_pct=2.0,
+            ret_fast_3bar_pct=1.4,
+            ret_slow_2bar_pct=2.5,
+            relative_intraday_volume=2.5,
+            vwap_position_pct=1.5,
+            pullback_from_intraday_high_pct=-0.4,
+            intraday_score=88,
+            intraday_risk_score=25,
+        ),
+    )
+    ranked_overlay = rank_intraday_overlay_contexts([weak_first, strong_second])
+    assert ranked_overlay[0].context.ticker == "STRG2"
+    assert ranked_overlay[0].original_rank == 2
+    print("intraday overlay rerank ok", ranked_overlay[0].adjusted_score)
+
+    trade_engine = TradeSimulationEngine(TradeConfig(max_hold_days=2, entry_mode=EntryMode.NEXT_OPEN, take_profit=9.0, stop_loss=9.0, fee_bps=0.0, slippage_bps=0.0))
+    trade_idx = pd.date_range("2024-01-01", periods=10, freq="B")
+    trade_df = pd.DataFrame({
+        "Open": np.linspace(100, 109, 10),
+        "High": np.linspace(101, 110, 10),
+        "Low": np.linspace(99, 108, 10),
+        "Close": np.linspace(100.5, 109.5, 10),
+        "Volume": np.full(10, 1_000_000.0),
+    }, index=trade_idx)
+    trade = trade_engine.simulate_trade(ticker="SYNH", ohlcv=trade_df, as_of=trade_df.index[4].date())
+    assert trade.hold_days == 2
+    print("trade hold_days trading-day count ok", trade.hold_days)
 
     print("=== PASS ===")
 

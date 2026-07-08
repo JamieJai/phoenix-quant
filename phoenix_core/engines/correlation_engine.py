@@ -9,6 +9,12 @@ from ..models import CorrelationInput, CorrelationResult
 from ..registry import EngineRegistry
 
 
+def _asof_frame(df: pd.DataFrame, as_of) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df[df.index <= pd.Timestamp(as_of)].copy()
+
+
 def _ret_series(df: pd.DataFrame) -> pd.Series:
     return df.sort_index()["Close"].dropna().pct_change().dropna()
 
@@ -21,7 +27,10 @@ class CorrelationEngine(Engine[CorrelationInput, CorrelationResult]):
     name = "correlation_v1"
 
     def run(self, input_data: CorrelationInput) -> CorrelationResult:
-        data: Dict[str, pd.DataFrame] = input_data.ohlcv
+        data: Dict[str, pd.DataFrame] = {
+            ticker: _asof_frame(df, input_data.as_of)
+            for ticker, df in input_data.ohlcv.items()
+        }
         ticker = input_data.ticker.upper()
         if ticker not in data:
             return CorrelationResult(ticker=ticker, as_of=input_data.as_of, correlations={})

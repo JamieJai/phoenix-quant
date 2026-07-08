@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 from phoenix_core.engines.intraday_context_engine import IntradayContext
+from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
 
 EXCLUDE_TOKENS={'TOP','ETF','USD','KST','UTC','AI','API','CSV','HTML','INFO','WARN','ERROR','PHOENIX','QUANT','BUY','SELL','HOLD','NONE','RISK','SCORE'}
 
@@ -33,11 +34,19 @@ def format_intraday_context(ctx: IntradayContext) -> str:
         f'주의:\n{notes}'
     )
 
-def format_intraday_overlay(contexts: Iterable[IntradayContext], max_items:int=5) -> str:
+def format_intraday_overlay(contexts: Iterable[IntradayContext], max_items:int=5, rerank:bool=True) -> str:
     rows=[]
-    for i,ctx in enumerate(list(contexts)[:max_items],1):
-        rows.append(f'{i}. {ctx.ticker} | score {ctx.intraday_score}/100 | 현재 {_money(ctx.current_price)} | 전일대비 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)} | risk {ctx.intraday_risk_score}/100')
-    return '📡 Intraday Overlay\n' + ('\n'.join(rows) if rows else '후보 티커를 추출하지 못했습니다.')
+    contexts_list=list(contexts)
+    if rerank:
+        ranked=rank_intraday_overlay_contexts(contexts_list,max_items=max_items)
+        for i,item in enumerate(ranked,1):
+            ctx=item.context
+            rows.append(f'{i}. {ctx.ticker} | adj {item.adjusted_score:.0f}/100 | daily #{item.original_rank} | intra {ctx.intraday_score}/100 | 현재 {_money(ctx.current_price)} | 전일대비 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)} | risk {ctx.intraday_risk_score}/100')
+    else:
+        for i,ctx in enumerate(contexts_list[:max_items],1):
+            rows.append(f'{i}. {ctx.ticker} | score {ctx.intraday_score}/100 | 현재 {_money(ctx.current_price)} | 전일대비 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)} | risk {ctx.intraday_risk_score}/100')
+    title='📡 Intraday Overlay' + (' (reranked)' if rerank else '')
+    return title + '\n' + ('\n'.join(rows) if rows else '후보 티커를 추출하지 못했습니다.')
 
 def extract_candidate_tickers(text:str, limit:int=10)->list[str]:
     found=[]

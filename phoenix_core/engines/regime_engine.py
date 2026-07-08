@@ -10,6 +10,12 @@ from ..models import MarketRegimeInput, MarketRegimeResult
 from ..registry import EngineRegistry
 
 
+def _asof_frame(df: pd.DataFrame, as_of) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df[df.index <= pd.Timestamp(as_of)].copy()
+
+
 def _close(df: pd.DataFrame) -> pd.Series:
     return df.sort_index()["Close"].dropna()
 
@@ -50,7 +56,10 @@ class MarketRegimeEngine(Engine[MarketRegimeInput, MarketRegimeResult]):
     name = "regime_v1"
 
     def run(self, input_data: MarketRegimeInput) -> MarketRegimeResult:
-        data: Dict[str, pd.DataFrame] = input_data.market_ohlcv
+        data: Dict[str, pd.DataFrame] = {
+            ticker: _asof_frame(df, input_data.as_of)
+            for ticker, df in input_data.market_ohlcv.items()
+        }
         qqq_20 = _ret(data["QQQ"], 20) if "QQQ" in data else 0.0
         spy_20 = _ret(data["SPY"], 20) if "SPY" in data else 0.0
         iwm_20 = _ret(data["IWM"], 20) if "IWM" in data else 0.0

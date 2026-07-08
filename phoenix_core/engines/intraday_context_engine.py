@@ -1,9 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Optional, Any
 import math, warnings
 import pandas as pd
+
+from phoenix_core.intraday_features import build_intraday_feature_dict
 
 @dataclass
 class IntradayContext:
@@ -29,6 +31,7 @@ class IntradayContext:
     intraday_risk_score: int
     label: str
     notes: list[str]
+    features: dict[str, float] = field(default_factory=dict)
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -101,7 +104,18 @@ class IntradayContextEngine:
         score,risk,label,score_notes=self._score(gap,intraday_ret,r10,r30,vol_ratio,vwap_pos,pull)
         notes+=score_notes
         if self.include_prepost: notes.append('prepost=True 기준입니다. 무료 데이터는 지연/누락될 수 있습니다.')
-        return IntradayContext(ticker,datetime.now().isoformat(timespec='seconds'),'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes)
+        features=build_intraday_feature_dict(
+            gap_prev_close_pct=gap,
+            session_return_pct=intraday_ret,
+            ret_fast_3bar_pct=r10,
+            ret_slow_2bar_pct=r30,
+            relative_intraday_volume=vol_ratio,
+            vwap_position_pct=vwap_pos,
+            pullback_from_intraday_high_pct=pull,
+            intraday_score=float(score),
+            intraday_risk_score=float(risk),
+        )
+        return IntradayContext(ticker,datetime.now().isoformat(timespec='seconds'),'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes,features)
     def _err(self,ticker,label,notes):
         return IntradayContext(ticker,datetime.now().isoformat(timespec='seconds'),'yfinance',None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,0,100,label,notes)
     def _previous_close(self,df):

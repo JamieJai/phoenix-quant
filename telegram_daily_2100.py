@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from phoenix_core.engines.intraday_context_engine import IntradayContextEngine
+from phoenix_core.intraday_feature_store import append_intraday_feature_rows, default_intraday_feature_cache_path
 from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_overlay
 from phoenix_core.services.telegram_message_formatter import compact_cli_output, disclaimer, header
 from phoenix_core.services.telegram_sender import TelegramSender, load_env_file, parse_chat_ids, send_long_message_with_token
@@ -26,7 +27,7 @@ def run_daily_once():
     project_dir=Path(os.getenv('PHOENIX_PROJECT_DIR','.')).resolve(); py=os.getenv('PHOENIX_PYTHON',sys.executable)
     timeout=int(os.getenv('PHOENIX_DAILY_TIMEOUT',os.getenv('PHOENIX_COMMAND_TIMEOUT','600')))
     top_n=int(os.getenv('PHOENIX_DAILY_TOP_N',os.getenv('PHOENIX_TOP_N','5'))); scan_n=int(os.getenv('PHOENIX_DAILY_SCAN_N',str(top_n)))
-    refresh=_env_bool('PHOENIX_DAILY_REFRESH',True); intraday=_env_bool('PHOENIX_INTRADAY_ENABLED',True); overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(top_n)))
+    refresh=_env_bool('PHOENIX_DAILY_REFRESH',True); intraday=_env_bool('PHOENIX_INTRADAY_ENABLED',True); overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(top_n))); overlay_rerank=_env_bool('PHOENIX_INTRADAY_OVERLAY_RERANK',True)
     cmd=[py,'main.py','--top','--top-n',str(scan_n)]
     if refresh: cmd.append('--refresh')
     _send(f'{header(f"21:00 Daily Top {top_n} 실행 시작")}\n\n분석 중입니다...')
@@ -39,7 +40,13 @@ def run_daily_once():
         tickers=extract_candidate_tickers(out,limit=overlay_max)
         if tickers:
             eng=IntradayContextEngine(os.getenv('PHOENIX_INTRADAY_PERIOD','5d'),os.getenv('PHOENIX_INTRADAY_INTERVAL_10M','10m'),os.getenv('PHOENIX_INTRADAY_INTERVAL_30M','30m'),_env_bool('PHOENIX_INTRADAY_PREPOST',True))
-            extra='\n\n'+format_intraday_overlay(eng.analyze_many(tickers),max_items=overlay_max)
+            contexts=eng.analyze_many(tickers)
+            if _env_bool('PHOENIX_INTRADAY_FEATURE_CACHE',True):
+                try:
+                    append_intraday_feature_rows(contexts,os.getenv('PHOENIX_INTRADAY_FEATURE_CACHE_PATH',default_intraday_feature_cache_path('data')))
+                except Exception as e:
+                    print(f'intraday feature cache warning: {e!r}')
+            extra='\n\n'+format_intraday_overlay(contexts,max_items=overlay_max,rerank=overlay_rerank)
     title=f'21:00 Daily Top {top_n}'
     msg=f'{header(title)}\n\n⚠️ Phoenix 실행 실패 code={proc.returncode}\n\n{out}\n\n{disclaimer()}' if proc.returncode else f'{header(title)}\n\n{out}{extra}\n\n{disclaimer()}'
     _send(msg)

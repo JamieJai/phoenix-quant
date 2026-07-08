@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import date
 from typing import Dict, Iterable, Optional
 
 import pandas as pd
@@ -18,6 +19,27 @@ logger = logging.getLogger("phoenix.data_loader")
 def _cache_path(ticker: str, cache_dir: str) -> str:
     safe = ticker.replace("^", "IDX_").replace("/", "_")
     return os.path.join(cache_dir, f"{safe}.csv")
+
+
+def _warn_if_stale_cache(ticker: str, df: pd.DataFrame, path: str, interval: str) -> None:
+    if interval != "1d" or df is None or df.empty:
+        return
+    try:
+        latest = pd.Timestamp(df.index.max()).date()
+    except Exception:
+        return
+    today = date.today()
+    age_days = (today - latest).days
+    if age_days >= 3:
+        mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(path)))
+        logger.warning(
+            "캐시 데이터가 오래됐을 수 있습니다: %s latest=%s age=%sd cache_mtime=%s path=%s",
+            ticker,
+            latest,
+            age_days,
+            mtime,
+            path,
+        )
 
 
 def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
@@ -70,6 +92,7 @@ def download_ohlcv(tickers: Iterable[str], cache_dir: str = "data", period: str 
         if not force_refresh and os.path.exists(path):
             try:
                 result[ticker] = normalize_ohlcv(pd.read_csv(path, index_col="Date", parse_dates=True))
+                _warn_if_stale_cache(ticker, result[ticker], path, interval)
                 continue
             except Exception as exc:  # noqa: BLE001
                 logger.warning("캐시 로드 실패, 재다운로드: %s (%s)", ticker, exc)

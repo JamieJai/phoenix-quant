@@ -10,6 +10,12 @@ from ..models import SectorRotationInput, SectorRotationResult, SectorStrength
 from ..registry import EngineRegistry
 
 
+def _asof_frame(df: pd.DataFrame, as_of) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df[df.index <= pd.Timestamp(as_of)].copy()
+
+
 def _ret(df: pd.DataFrame, days: int) -> float:
     c = df.sort_index()["Close"].dropna()
     if len(c) <= days:
@@ -29,7 +35,10 @@ class SectorRotationEngine(Engine[SectorRotationInput, SectorRotationResult]):
     name = "rotation_v1"
 
     def run(self, input_data: SectorRotationInput) -> SectorRotationResult:
-        data: Dict[str, pd.DataFrame] = input_data.market_ohlcv
+        data: Dict[str, pd.DataFrame] = {
+            ticker: _asof_frame(df, input_data.as_of)
+            for ticker, df in input_data.market_ohlcv.items()
+        }
         etfs: List[str] = input_data.sector_etfs or ["XLK", "XLY", "XLC", "XLF", "XLV", "XLI", "XLE", "XLP", "XLU", "XLB", "XLRE", "SMH", "SOXX", "QQQ"]
         strengths: list[SectorStrength] = []
         for etf in etfs:
