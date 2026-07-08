@@ -128,6 +128,7 @@ class RankingInput:
     top_n: int = 20
     k: int = 50
     verbose: bool = False
+    xgb_blend_weight: float = 0.30
 
 
 @dataclass

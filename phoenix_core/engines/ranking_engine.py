@@ -94,9 +94,10 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                 feature_engine = (input_data.prebuilt or {}).get("feature_engine")
                 feature_vector = feature_engine.run(FeatureEngineInput(ticker=ticker, ohlcv=input_data.raw_data[ticker], as_of=decision.as_of))
                 xgb_score = self._xgb_score(xgb_model, feature_vector.values)
+                xgb_blend_weight = float(np.clip(getattr(input_data, "xgb_blend_weight", 0.30), 0.0, 1.0))
                 final_rank_score = float(decision.suitability_score)
                 if np.isfinite(xgb_score):
-                    final_rank_score = 0.70 * final_rank_score + 0.30 * (xgb_score * 100.0)
+                    final_rank_score = (1.0 - xgb_blend_weight) * final_rank_score + xgb_blend_weight * (xgb_score * 100.0)
                 items.append(RankingItem(
                     ticker=ticker,
                     as_of=decision.as_of,

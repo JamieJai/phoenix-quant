@@ -16,7 +16,7 @@ from phoenix_core import bootstrap
 from phoenix_core.config import AppConfig, load_config
 from phoenix_core.data_loader import download_ohlcv
 from phoenix_core.default_features import BASELINE_FEATURE_NAMES
-from phoenix_core.models import RankingItem
+from phoenix_core.models import FeatureEngineInput
 from phoenix_core.pipeline import analyze_ticker_quiet, build_pattern_records
 from phoenix_core.registry import EngineRegistry
 from phoenix_core.engines.statistical_validation_engine import StatisticalValidationEngine, ValidationConfig
@@ -71,6 +71,8 @@ class BenchmarkConfig:
     test_end: Optional[str]
     embargo_trading_days: int
     train_top_k_rules: int
+    rank_mode: str
+    xgb_blend_weights: List[float]
 
 
 def _ensure_dirs(config: AppConfig) -> None:
@@ -232,13 +234,35 @@ def _future_result(full_raw: Dict[str, pd.DataFrame], ticker: str, as_of_date, h
     return result
 
 
-def _row_from_decision(rank: int, decision, meta: Dict[str, Any], full_raw: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+def _row_from_decision(
+    rank: int,
+    decision,
+    meta: Dict[str, Any],
+    full_raw: Dict[str, pd.DataFrame],
+    *,
+    xgb_score: float = float("nan"),
+    xgb_blend_weight: float = 0.30,
+) -> Dict[str, Any]:
     future = _future_result(full_raw, decision.ticker, decision.as_of)
     sector_rotation = meta.get("sector_rotation")
     target_strength = getattr(sector_rotation, "target_strength", None) if sector_rotation else None
     regime_result = meta.get("regime_result")
+    xgb_score_available = bool(np.isfinite(float(xgb_score)))
+    xgb_score_value = float(xgb_score) if xgb_score_available else 0.0
+    final_rank_score = _blend_rank_score(
+        decision.suitability_score,
+        xgb_score_value,
+        xgb_score_available=xgb_score_available,
+        xgb_blend_weight=xgb_blend_weight,
+    )
     return {
         "rank": rank,
+        "rank_mode": "decision",
+        "rank_score": float(decision.suitability_score),
+        "xgb_blend_weight": float(xgb_blend_weight),
+        "xgb_score": xgb_score_value,
+        "xgb_score_available": xgb_score_available,
+        "final_rank_score": final_rank_score,
         "as_of": str(decision.as_of),
         "ticker": decision.ticker,
         "suitability_score": decision.suitability_score,
@@ -269,6 +293,210 @@ def _row_from_decision(rank: int, decision, meta: Dict[str, Any], full_raw: Dict
         "close_hit_5pct_5d": future.get("close_hit_5pct_5d", np.nan),
         "close_hit_10pct_10d": future.get("close_hit_10pct_10d", np.nan),
     }
+
+
+def _parse_xgb_blend_weights(value: Optional[str | float]) -> List[float]:
+    if value is None:
+        return [0.30]
+    if isinstance(value, (float, int)):
+        raw_parts = [str(value)]
+    else:
+        raw_parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if not raw_parts:
+        return [0.30]
+    weights: List[float] = []
+    seen: set[float] = set()
+    for part in raw_parts:
+        weight = round(float(part), 6)
+        if weight < 0.0 or weight > 1.0:
+            raise ValueError("--xgb-blend-weight 값은 0.0~1.0 사이여야 합니다.")
+        if weight in seen:
+            continue
+        seen.add(weight)
+        weights.append(weight)
+    return weights
+
+
+def _primary_rank_mode(rank_mode: str) -> str:
+    return "ranking" if str(rank_mode) == "both" else str(rank_mode)
+
+
+def _primary_xgb_blend_weight(weights: Sequence[float]) -> float:
+    values = [float(w) for w in weights]
+    for weight in values:
+        if abs(weight - 0.30) <= 1e-9:
+            return 0.30
+    return values[0] if values else 0.30
+
+
+def _blend_rank_score(
+    suitability_score: float,
+    xgb_score: float,
+    *,
+    xgb_score_available: bool,
+    xgb_blend_weight: float,
+) -> float:
+    suitability = float(suitability_score)
+    weight = float(np.clip(float(xgb_blend_weight), 0.0, 1.0))
+    if weight <= 0.0 or not xgb_score_available or not np.isfinite(float(xgb_score)):
+        return suitability
+    return (1.0 - weight) * suitability + weight * (float(xgb_score) * 100.0)
+
+
+def _rank_candidate_rows(rows: List[Dict[str, Any]], rank_mode: str, xgb_blend_weight: float) -> List[Dict[str, Any]]:
+    ranked: List[Dict[str, Any]] = []
+    mode = str(rank_mode)
+    weight = float(xgb_blend_weight)
+    for row in rows:
+        copied = dict(row)
+        xgb_available = bool(copied.get("xgb_score_available", False))
+        final_score = _blend_rank_score(
+            float(copied.get("suitability_score", 0.0) or 0.0),
+            float(copied.get("xgb_score", 0.0) or 0.0),
+            xgb_score_available=xgb_available,
+            xgb_blend_weight=weight,
+        )
+        copied["final_rank_score"] = final_score
+        copied["xgb_blend_weight"] = weight
+        copied["rank_mode"] = mode
+        if mode == "ranking":
+            copied["rank_score"] = final_score
+        elif mode == "decision":
+            copied["rank_score"] = float(copied.get("suitability_score", 0.0) or 0.0)
+        else:
+            raise ValueError(f"지원하지 않는 rank_mode: {rank_mode}")
+        ranked.append(copied)
+
+    ranked.sort(
+        key=lambda r: (
+            str(r.get("as_of")),
+            -float(r.get("rank_score", 0.0) or 0.0),
+            -float(r.get("suitability_score", 0.0) or 0.0),
+            -float(r.get("confidence_score", 0.0) or 0.0),
+            str(r.get("ticker", "")),
+        )
+    )
+
+    out: List[Dict[str, Any]] = []
+    current_as_of = None
+    rank = 0
+    for row in ranked:
+        as_of = str(row.get("as_of"))
+        if as_of != current_as_of:
+            current_as_of = as_of
+            rank = 1
+        else:
+            rank += 1
+        copied = dict(row)
+        copied["rank"] = rank
+        out.append(copied)
+    return out
+
+
+def _score_decision_with_ranking_model(ranking_engine: Any, xgb_model: Any, prebuilt: Dict[str, Any], decision) -> float:
+    if ranking_engine is None or xgb_model is None:
+        return float("nan")
+    feature_engine = prebuilt.get("feature_engine")
+    raw_data = prebuilt.get("raw_data", {})
+    if feature_engine is None or decision.ticker not in raw_data:
+        return float("nan")
+    feature_vector = feature_engine.run(
+        FeatureEngineInput(ticker=decision.ticker, ohlcv=raw_data[decision.ticker], as_of=decision.as_of)
+    )
+    return float(ranking_engine._xgb_score(xgb_model, feature_vector.values))
+
+
+def _rank_mode_comparison(
+    candidate_rows: List[Dict[str, Any]],
+    full_raw: Dict[str, pd.DataFrame],
+    bench: BenchmarkConfig,
+) -> pd.DataFrame:
+    if not candidate_rows:
+        return pd.DataFrame()
+
+    trade_cache = _build_trade_outcome_cache(
+        candidate_rows,
+        full_raw,
+        take_profit=bench.take_profit,
+        stop_loss=bench.stop_loss,
+        hold_days=bench.hold_days,
+        same_day_rule=bench.same_day_rule,
+        entry_mode=bench.entry_mode,
+        fee_bps=bench.fee_bps,
+        slippage_bps=bench.slippage_bps,
+        min_dollar_volume=bench.min_dollar_volume,
+        min_price=bench.min_price,
+        max_gap_open=bench.max_gap_open,
+        entry_penalty_bps=bench.entry_penalty_bps,
+        top_n=bench.top_n,
+    )
+    random_dist = _random_trade_distribution(
+        candidate_rows,
+        trade_cache,
+        top_n=bench.top_n,
+        iterations=bench.random_baseline,
+        seed=bench.random_seed,
+    )
+    random_values = (
+        random_dist["portfolio_return_by_date_mean"].dropna().astype(float).values
+        if not random_dist.empty and "portfolio_return_by_date_mean" in random_dist.columns
+        else np.array([], dtype=float)
+    )
+    random_mean = float(np.mean(random_values)) if len(random_values) else np.nan
+    stats_engine = StatisticalValidationEngine(
+        ValidationConfig(
+            bootstrap_iterations=int(bench.bootstrap),
+            confidence_level=float(bench.confidence_level),
+            random_seed=int(bench.random_seed),
+        )
+    )
+
+    modes: List[tuple[str, float]] = [("decision", 0.0)]
+    for weight in bench.xgb_blend_weights:
+        modes.append(("ranking", float(weight)))
+
+    seen: set[tuple[str, float]] = set()
+    rows: List[Dict[str, Any]] = []
+    for mode, weight in modes:
+        key = (mode, round(float(weight), 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        ranked_rows = _rank_candidate_rows(candidate_rows, mode, weight)
+        selected = _rows_for_top_n(ranked_rows, bench.top_n)
+        trade_rows, trade_summary = _build_trade_rows_with_engine_v20(
+            selected,
+            full_raw,
+            take_profit=bench.take_profit,
+            stop_loss=bench.stop_loss,
+            hold_days=bench.hold_days,
+            same_day_rule=bench.same_day_rule,
+            entry_mode=bench.entry_mode,
+            fee_bps=bench.fee_bps,
+            slippage_bps=bench.slippage_bps,
+            min_dollar_volume=bench.min_dollar_volume,
+            min_price=bench.min_price,
+            max_gap_open=bench.max_gap_open,
+            entry_penalty_bps=bench.entry_penalty_bps,
+            top_n=bench.top_n,
+        )
+        portfolio_mean = float(trade_summary.get("portfolio_return_by_date_mean", np.nan))
+        p_value = stats_engine.empirical_p_value(portfolio_mean, random_values, higher_is_better=True) if len(random_values) and np.isfinite(portfolio_mean) else np.nan
+        rows.append({
+            "rank_mode": mode,
+            "xgb_blend_weight": float(weight),
+            "top_n": int(bench.top_n),
+            "n_dates": int(pd.DataFrame(selected)["as_of"].nunique()) if selected else 0,
+            "selected_slots": int(len(selected)),
+            "portfolio_return_by_date_mean": portfolio_mean,
+            "random_mean": random_mean,
+            "alpha": portfolio_mean - random_mean if np.isfinite(portfolio_mean) and np.isfinite(random_mean) else np.nan,
+            "p_value": p_value,
+            "mdd": float(trade_summary.get("portfolio_mdd", np.nan)),
+            "active_trades": int(trade_summary.get("n_active_trades", 0) or 0),
+            "cash_slots": int(trade_summary.get("cash_slots", 0) or 0),
+        })
+    return pd.DataFrame(rows)
 
 
 def _summarize_rows(rows: List[Dict[str, Any]], top_n: int) -> Dict[str, Any]:
@@ -1377,6 +1605,7 @@ def _benchmark_output_paths(out_dir: str) -> Dict[str, str]:
         "random_distribution": os.path.join(out_dir, "benchmark_random_distribution.csv"),
         "daily": os.path.join(out_dir, "benchmark_daily.csv"),
         "monthly": os.path.join(out_dir, "benchmark_monthly.csv"),
+        "rank_mode_comparison": os.path.join(out_dir, "benchmark_rank_mode_comparison.csv"),
         "bucket": os.path.join(out_dir, "benchmark_score_buckets.csv"),
         "failed": os.path.join(out_dir, "benchmark_failed_dates.csv"),
         "html": os.path.join(out_dir, "benchmark_report.html"),
@@ -1454,7 +1683,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
         try:
             train_raw = _slice_raw_until(full_raw, as_of)
             prebuilt = _build_prebuilt_for_asof(app_config, train_raw, retrain=True, k=k)
-            decisions = []
+            ranking_engine = EngineRegistry.get("ranking_engine", app_config.engines.get("ranking_engine", "ranking_v1"))
+            xgb_model = None
+            try:
+                xgb_model = ranking_engine._fit_xgb_model(prebuilt.get("records", []))
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger("benchmark").debug("%s xgb disabled: %s", as_of_str, exc)
+            rows_for_date: List[Dict[str, Any]] = []
             for ticker in app_config.universe:
                 if ticker not in train_raw:
                     continue
@@ -1469,15 +1704,27 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
                         raw_data=train_raw,
                         prebuilt=prebuilt,
                     )
-                    decisions.append((decision, meta))
+                    xgb_score = _score_decision_with_ranking_model(ranking_engine, xgb_model, prebuilt, decision)
+                    row = _row_from_decision(
+                        0,
+                        decision,
+                        meta,
+                        full_raw,
+                        xgb_score=xgb_score,
+                        xgb_blend_weight=_primary_xgb_blend_weight(bench.xgb_blend_weights),
+                    )
+                    rows_for_date.append(row)
                 except Exception as exc:  # noqa: BLE001
                     logging.getLogger("benchmark").debug("%s %s skip: %s", as_of_str, ticker, exc)
-            decisions.sort(key=lambda dm: (dm[0].suitability_score, dm[0].confidence_score), reverse=True)
+            ranked_rows = _rank_candidate_rows(
+                rows_for_date,
+                _primary_rank_mode(bench.rank_mode),
+                _primary_xgb_blend_weight(bench.xgb_blend_weights),
+            )
             # 전체 후보는 random baseline 계산용으로 저장한다.
-            for rank, (decision, meta) in enumerate(decisions, start=1):
-                row = _row_from_decision(rank, decision, meta, full_raw)
+            for row in ranked_rows:
                 candidate_rows.append(row)
-                if rank <= max_top_n:
+                if int(row.get("rank", 999999)) <= max_top_n:
                     detail_rows.append(row)
             completed_dates.add(as_of_str)
             _write_benchmark_partials(paths, candidate_rows, detail_rows, failed_dates)
@@ -1506,6 +1753,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     grid_search_df = pd.DataFrame()
     trade_random_distribution_df = pd.DataFrame()
     portfolio_by_date_df = pd.DataFrame()
+    rank_mode_comparison_df = _rank_mode_comparison(candidate_rows, full_raw, bench)
 
     if bench.trade_sim:
         trade_rows, trade_summary = _build_trade_rows_with_engine_v20(
@@ -1622,6 +1870,10 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     summary["min_dollar_volume"] = bench.min_dollar_volume
     summary["max_gap_open"] = np.nan if bench.max_gap_open is None else bench.max_gap_open
     summary["entry_penalty_bps"] = bench.entry_penalty_bps
+    summary["rank_mode"] = bench.rank_mode
+    summary["primary_rank_mode"] = _primary_rank_mode(bench.rank_mode)
+    summary["xgb_blend_weight"] = _primary_xgb_blend_weight(bench.xgb_blend_weights)
+    summary["xgb_blend_weights"] = ",".join(str(w) for w in bench.xgb_blend_weights)
     summary["failed_dates"] = len(failed_dates)
     summary_df = pd.DataFrame([summary])
 
@@ -1642,12 +1894,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     random_distribution_df.to_csv(paths["random_distribution"], index=False, encoding="utf-8-sig")
     daily_df.to_csv(paths["daily"], index=False, encoding="utf-8-sig")
     monthly_df.to_csv(paths["monthly"], index=False, encoding="utf-8-sig")
+    rank_mode_comparison_df.to_csv(paths["rank_mode_comparison"], index=False, encoding="utf-8-sig")
     bucket_df.to_csv(paths["bucket"], index=False, encoding="utf-8-sig")
     pd.DataFrame(failed_dates).to_csv(paths["failed"], index=False, encoding="utf-8-sig")
     _write_html_report(paths["html"], summary, daily_df, monthly_df, bucket_df, detail_df, top_list_df, random_df, alpha_df, trade_summary_df, trade_df, grid_search_df, statistics_df, trade_random_distribution_df, portfolio_by_date_df)
 
     print("[5/5] 완료")
-    return {"summary": summary, "paths": paths, "failed_dates": failed_dates, "top_list": top_list_df, "random": random_df, "alpha": alpha_df, "trade_summary": trade_summary_df, "trade": trade_df, "grid_search": grid_search_df, "statistics": statistics_df, "random_distribution": random_distribution_df, "trade_random_distribution": trade_random_distribution_df, "portfolio_by_date": portfolio_by_date_df, "selected_rows": selected_rows, "candidate_rows": candidate_rows, "full_raw": full_raw}
+    return {"summary": summary, "paths": paths, "failed_dates": failed_dates, "top_list": top_list_df, "random": random_df, "alpha": alpha_df, "trade_summary": trade_summary_df, "trade": trade_df, "grid_search": grid_search_df, "statistics": statistics_df, "random_distribution": random_distribution_df, "trade_random_distribution": trade_random_distribution_df, "portfolio_by_date": portfolio_by_date_df, "rank_mode_comparison": rank_mode_comparison_df, "selected_rows": selected_rows, "candidate_rows": candidate_rows, "full_raw": full_raw}
 
 
 
@@ -1895,6 +2148,8 @@ def run_train_test_validation(app_config: AppConfig, bench: BenchmarkConfig) -> 
         "min_dollar_volume": bench.min_dollar_volume,
         "max_gap_open": np.nan if bench.max_gap_open is None else bench.max_gap_open,
         "entry_penalty_bps": bench.entry_penalty_bps,
+        "rank_mode": bench.rank_mode,
+        "xgb_blend_weights": ",".join(str(w) for w in bench.xgb_blend_weights),
         "train_report_dir": os.path.dirname(train_result["paths"]["summary"]),
         "test_report_dir": os.path.dirname(test_result["paths"]["summary"]),
     }
@@ -1938,6 +2193,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--random-baseline", type=int, default=0, help="랜덤 TopN baseline 반복 횟수. 예: 1000")
     p.add_argument("--top-list", default=None, help="여러 TopN을 한 번에 비교. 예: 5,10,20,50")
     p.add_argument("--random-seed", type=int, default=42, help="랜덤 baseline 시드")
+    p.add_argument("--rank-mode", choices=["decision", "ranking", "both"], default="decision", help="OOS TopN 정렬 기준: decision=suitability, ranking=final_rank_score, both=둘 다 비교")
+    p.add_argument("--xgb-blend-weight", default="0.30", help="ranking 모드 XGB blend weight. 단일값 또는 comma grid 예: 0.0,0.1,0.2,0.3,0.4,0.5")
     p.add_argument("--bootstrap", type=int, default=1000, help="Block bootstrap 반복 횟수. 예: 1000")
     p.add_argument("--confidence-level", type=float, default=0.95, help="신뢰수준. 기본 0.95")
     p.add_argument("--trade-sim", action="store_true", help="실제 매매 시뮬레이션 실행")
@@ -2019,6 +2276,8 @@ def main() -> None:
         test_end=args.test_end,
         embargo_trading_days=args.embargo_trading_days,
         train_top_k_rules=args.train_top_k_rules,
+        rank_mode=args.rank_mode,
+        xgb_blend_weights=_parse_xgb_blend_weights(args.xgb_blend_weight),
     )
     if bench.train_test:
         run_train_test_validation(app_config, bench)
@@ -2033,6 +2292,7 @@ def main() -> None:
     print("Phoenix Quant Benchmark v2.0.1")
     print("━━━━━━━━━━━━━━━━━━━━")
     print(f"기간: {s['start']} ~ {s['end']} / frequency={s['frequency']} / Top{s['top_n']}")
+    print(f"Rank Mode: {s.get('rank_mode')} / primary={s.get('primary_rank_mode')} / xgb_weight={s.get('xgb_blend_weight')}")
     print(f"기준일 수: {s['n_dates']} / 거래 수: {s['n_trades']} / 실패 기준일: {s['failed_dates']}")
     print(f"5D +5% Hit Rate: {_pct(s['hit_5pct_5d_rate'])}")
     print(f"10D +10% Hit Rate: {_pct(s['hit_10pct_10d_rate'])}")
@@ -2074,6 +2334,19 @@ def main() -> None:
             print(f"- Random Trade Avg: {_pct(tr.get('random_trade_return_mean'))} / Alpha: {_pct(tr.get('alpha_trade_return_mean'))}")
         if pd.notna(tr.get("portfolio_return_by_date_mean", np.nan)):
             print(f"- Portfolio by Date Avg: {_pct(tr.get('portfolio_return_by_date_mean'))} / Random: {_pct(tr.get('random_portfolio_return_by_date_mean'))} / Alpha: {_pct(tr.get('alpha_portfolio_return_by_date_mean'))}")
+
+    comparison_df = result.get("rank_mode_comparison")
+    if comparison_df is not None and not comparison_df.empty:
+        print()
+        print("Decision-only vs XGB-assisted Ranking:")
+        for _, row in comparison_df.iterrows():
+            print(
+                f"- {row.get('rank_mode')} w={float(row.get('xgb_blend_weight', 0.0)):.2f} "
+                f"| Portfolio {_pct(row.get('portfolio_return_by_date_mean'))} "
+                f"/ Random {_pct(row.get('random_mean'))} / Alpha {_pct(row.get('alpha'))} "
+                f"/ p={_fmt(row.get('p_value'), 4)} / MDD {_pct(row.get('mdd'))} "
+                f"/ active {int(row.get('active_trades', 0))} / cash {int(row.get('cash_slots', 0))}"
+            )
 
     statistics_df = result.get("statistics")
     if statistics_df is not None and not statistics_df.empty:
