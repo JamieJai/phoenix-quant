@@ -19,18 +19,11 @@ def format_intraday_context(ctx: IntradayContext) -> str:
         vwap_state='VWAP 위' if ctx.above_vwap else 'VWAP 아래'
     notes='\n'.join(f'- {n}' for n in ctx.notes[:3]) if ctx.notes else '- 특이 주의사항 없음'
     return (
-        f'📡 Intraday Context - {ctx.ticker}\n'
-        f'Intraday Score: {ctx.intraday_score}/100 | Risk: {ctx.intraday_risk_score}/100\n'
-        f'Label: {ctx.label}\n\n'
-        f'현재가: {_money(ctx.current_price)}\n'
-        f'전일 종가: {_money(ctx.previous_close)}\n'
-        f'전일 대비: {_pct(ctx.current_vs_prev_close_pct)}\n'
-        f'당일/세션 시작가 대비: {_pct(ctx.intraday_return_pct)}\n\n'
-        f'10m 단기 흐름: {_pct(ctx.latest_10m_return_pct)}\n'
-        f'30m 단기 흐름: {_pct(ctx.latest_30m_return_pct)}\n'
-        f'거래량 비율: {_ratio(ctx.intraday_volume_ratio)}\n'
-        f'VWAP: {_money(ctx.vwap)} ({vwap_state}, {_pct(ctx.vwap_position_pct)})\n'
-        f'당일 고점 대비: {_pct(ctx.pullback_from_intraday_high_pct)}\n\n'
+        f'📡 Intraday - {ctx.ticker}\n'
+        f'Score {ctx.intraday_score}/100 | Risk {ctx.intraday_risk_score}/100 | {ctx.label}\n'
+        f'현재 {_money(ctx.current_price)} | 전일 {_pct(ctx.current_vs_prev_close_pct)} | 세션 {_pct(ctx.intraday_return_pct)}\n'
+        f'10m {_pct(ctx.latest_10m_return_pct)} | 30m {_pct(ctx.latest_30m_return_pct)} | Vol {_ratio(ctx.intraday_volume_ratio)}\n'
+        f'VWAP {_pct(ctx.vwap_position_pct)} ({vwap_state}) | 고점대비 {_pct(ctx.pullback_from_intraday_high_pct)}\n\n'
         f'주의:\n{notes}'
     )
 
@@ -41,11 +34,11 @@ def format_intraday_overlay(contexts: Iterable[IntradayContext], max_items:int=5
         ranked=rank_intraday_overlay_contexts(contexts_list,max_items=max_items)
         for i,item in enumerate(ranked,1):
             ctx=item.context
-            rows.append(f'{i}. {ctx.ticker} | adj {item.adjusted_score:.0f}/100 | daily #{item.original_rank} | intra {ctx.intraday_score}/100 | 현재 {_money(ctx.current_price)} | 전일대비 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)} | risk {ctx.intraday_risk_score}/100')
+            rows.append(f'{i}. {ctx.ticker}  adj {item.adjusted_score:.0f} | daily #{item.original_rank} | intra {ctx.intraday_score} | risk {ctx.intraday_risk_score}\n   현재 {_money(ctx.current_price)} | 전일 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)}')
     else:
         for i,ctx in enumerate(contexts_list[:max_items],1):
-            rows.append(f'{i}. {ctx.ticker} | score {ctx.intraday_score}/100 | 현재 {_money(ctx.current_price)} | 전일대비 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)} | risk {ctx.intraday_risk_score}/100')
-    title='📡 Intraday Overlay' + (' (reranked)' if rerank else '')
+            rows.append(f'{i}. {ctx.ticker}  intra {ctx.intraday_score} | risk {ctx.intraday_risk_score}\n   현재 {_money(ctx.current_price)} | 전일 {_pct(ctx.current_vs_prev_close_pct)} | 10m {_pct(ctx.latest_10m_return_pct)} | VWAP {_pct(ctx.vwap_position_pct)}')
+    title='📡 Intraday Overlay' + (' - 장중 재정렬' if rerank else '')
     return title + '\n' + ('\n'.join(rows) if rows else '후보 티커를 추출하지 못했습니다.')
 
 def extract_candidate_tickers(text:str, limit:int=10)->list[str]:

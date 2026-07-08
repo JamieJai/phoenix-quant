@@ -19,6 +19,8 @@ from phoenix_core.labels import compute_forward_labels
 from phoenix_core.intraday_features import INTRADAY_FEATURE_NAMES, build_intraday_feature_dict
 from phoenix_core.intraday_feature_store import append_intraday_feature_rows, load_intraday_feature_cache
 from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
+from phoenix_core.services.intraday_message_formatter import format_intraday_overlay
+from phoenix_core.services.telegram_message_formatter import compact_analysis_output, compact_ranking_output
 from phoenix_core.models import (
     CorrelationInput,
     ContextEngineInput,
@@ -280,6 +282,35 @@ def main():
     assert ranked_overlay[0].context.ticker == "STRG2"
     assert ranked_overlay[0].original_rank == 2
     print("intraday overlay rerank ok", ranked_overlay[0].adjusted_score)
+
+    ranking_text = """Phoenix Quant v1.2 Ranking
+기준일: 2024-01-02
+Rank | Ticker | Suitability | Confidence | Risk | Market | Sector | Pattern Rarity | 5D Hit | Label
+ 1 | NVDA   |  71.2 |  88.0 |  31.5 |  60.0 |  80.0 |  95.0 |  42% | 관심
+ 2 | AMD    |  62.1 |  81.0 |  44.0 |  58.0 |  76.0 |  90.0 |  35% | 관심
+"""
+    compact_rank = compact_ranking_output(ranking_text, max_rows=2)
+    assert "NVDA" in compact_rank and "AMD" in compact_rank and "Rank | Ticker" in compact_rank
+
+    analysis_text = """Phoenix Quant v1.2
+Ticker: NVDA
+기준일: 2024-01-02
+기준가: $100.00
+단타 적합도: 70/100
+신뢰도: 88/100
+위험도: 31/100
+Decision Breakdown:
+  - pattern_contribution: +20.0
+AI Summary: sample summary
+Top Similar Cases:
+  - omitted
+"""
+    compact_analysis = compact_analysis_output(analysis_text)
+    assert "Ticker: NVDA" in compact_analysis and "AI Summary" in compact_analysis and "Top Similar" not in compact_analysis
+
+    overlay_text = format_intraday_overlay([weak_first, strong_second], max_items=2, rerank=True)
+    assert "장중 재정렬" in overlay_text and "STRG2" in overlay_text and "daily #2" in overlay_text
+    print("telegram compact formatter ok")
 
     trade_engine = TradeSimulationEngine(TradeConfig(max_hold_days=2, entry_mode=EntryMode.NEXT_OPEN, take_profit=9.0, stop_loss=9.0, fee_bps=0.0, slippage_bps=0.0))
     trade_idx = pd.date_range("2024-01-01", periods=10, freq="B")

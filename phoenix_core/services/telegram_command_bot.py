@@ -6,7 +6,7 @@ from typing import Optional
 from phoenix_core.engines.intraday_context_engine import IntradayContextEngine
 from phoenix_core.intraday_feature_store import append_intraday_feature_rows, default_intraday_feature_cache_path
 from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_context, format_intraday_overlay
-from phoenix_core.services.telegram_message_formatter import compact_cli_output, disclaimer, header, help_message
+from phoenix_core.services.telegram_message_formatter import compact_analysis_output, compact_cli_output, compact_ranking_output, disclaimer, format_status_message, header, help_message
 from phoenix_core.services.telegram_sender import load_env_file, parse_chat_ids, send_chat_action_with_token, send_long_message_with_token, telegram_api
 
 TICKER_RE=re.compile(r'^[A-Za-z0-9\.\-]{1,12}$')
@@ -95,7 +95,7 @@ class PhoenixTelegramBot:
         if cmd in {'/start','/help'}: return help_message()
         if cmd=='/ping': return 'pong ✅'
         if cmd=='/status':
-            return f'Phoenix Bot Status\n\nbot_profile: {profile.name}\nyour_chat_id: {chat_id}\nproject_dir: {self.project_dir}\npython: {self.python_exe}\ntimeout_sec: {self.timeout_sec}\ndefault_top_n: {self.default_top_n}\nintraday_enabled: {self.intraday_enabled}\nintraday_overlay: {self.overlay_enabled}\nintraday_overlay_rerank: {self.intraday_overlay_rerank}'
+            return format_status_message(bot_profile=profile.name,your_chat_id=chat_id,project_dir=self.project_dir,python=self.python_exe,timeout_sec=self.timeout_sec,default_top_n=self.default_top_n,intraday_enabled=self.intraday_enabled,intraday_overlay=self.overlay_enabled,intraday_overlay_rerank=self.intraday_overlay_rerank,intraday_feature_cache=self.intraday_feature_cache_enabled)
         if cmd=='/top': return self._cmd_top(args,chat_id,profile)
         if cmd=='/analyze': return self._cmd_analyze(args,chat_id,profile)
         if cmd=='/intraday': return self._cmd_intraday(args,chat_id,profile)
@@ -116,7 +116,8 @@ class PhoenixTelegramBot:
                 contexts=self.intraday_engine.analyze_many(tickers)
                 self._record_intraday_contexts(contexts)
                 extra='\n\n'+format_intraday_overlay(contexts,self.overlay_max,rerank=self.intraday_overlay_rerank)
-        return f'{header(f"Top {top_n} 후보")}\n\n{out}{extra}\n\n{disclaimer()}'
+        summary=compact_ranking_output(out, max_rows=top_n)
+        return f'{header(f"Top {top_n} 후보")}\n\n{summary}{extra}\n\n{disclaimer()}'
     def _cmd_analyze(self,args,chat_id,p):
         if not args: return '사용법: /analyze NVDA'
         ticker=args[0].upper().strip()
@@ -130,7 +131,8 @@ class PhoenixTelegramBot:
             ctx=self.intraday_engine.analyze(ticker)
             self._record_intraday_contexts([ctx])
             extra='\n\n'+format_intraday_context(ctx)
-        return f'{header(f"{ticker} 상세 분석")}\n\n{out}{extra}\n\n{disclaimer()}'
+        summary=compact_analysis_output(out)
+        return f'{header(f"{ticker} 상세 분석")}\n\n{summary}{extra}\n\n{disclaimer()}'
     def _cmd_intraday(self,args,chat_id,p):
         if not args: return '사용법: /intraday NVDA'
         ticker=args[0].upper().strip()
@@ -146,7 +148,8 @@ class PhoenixTelegramBot:
             ctx=self.intraday_engine.analyze('SPY')
             self._record_intraday_contexts([ctx])
             extra='\n\n'+format_intraday_context(ctx)
-        return f'{header("시장 국면 참고 분석 - SPY")}\n\n{out}{extra}\n\n{disclaimer()}'
+        summary=compact_analysis_output(out)
+        return f'{header("시장 국면 참고 분석 - SPY")}\n\n{summary}{extra}\n\n{disclaimer()}'
     def _record_intraday_contexts(self,contexts):
         if not self.intraday_feature_cache_enabled:
             return
