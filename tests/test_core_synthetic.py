@@ -31,7 +31,7 @@ from phoenix_core.models import (
     SectorRotationInput,
     SimilarityQuery,
 )
-from phoenix_core.pipeline import build_pattern_records
+from phoenix_core.pipeline import build_pattern_records, build_trade_plan
 from phoenix_core.registry import EngineRegistry
 from phoenix_core.trade import EntryMode, TradeConfig, TradeSimulationEngine
 
@@ -299,6 +299,11 @@ Ticker: NVDA
 단타 적합도: 70/100
 신뢰도: 88/100
 위험도: 31/100
+Trade Plan:
+  - 진입 기준가: $100.00 (기준일 종가)
+  - 목표 매도가: $105.00 (+5.0%)
+  - 손절가: $97.00 (-3.0%)
+  - 최대 보유: 5거래일 / 예상 왕복비용: 0.13%
 Decision Breakdown:
   - pattern_contribution: +20.0
 AI Summary: sample summary
@@ -307,6 +312,13 @@ Top Similar Cases:
 """
     compact_analysis = compact_analysis_output(analysis_text)
     assert "Ticker: NVDA" in compact_analysis and "AI Summary" in compact_analysis and "Top Similar" not in compact_analysis
+    assert "목표 매도가" in compact_analysis and "손절가" in compact_analysis
+
+    cfg = load_config(os.path.join(ROOT, "config/config.yaml"))
+    plan = build_trade_plan(100.0, cfg)
+    assert plan["take_profit_price"] == 105.0
+    assert plan["stop_loss_price"] == 97.0
+    print("trade plan report schema ok")
 
     overlay_text = format_intraday_overlay([weak_first, strong_second], max_items=2, rerank=True)
     assert "장중 재정렬" in overlay_text and "STRG2" in overlay_text and "daily #2" in overlay_text

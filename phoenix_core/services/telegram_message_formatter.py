@@ -51,6 +51,8 @@ def compact_analysis_output(text: str, max_chars: int = 2300) -> str:
     keep_prefixes = (
         'Ticker:', '기준일:', '기준가:', '단타 적합도:', '신뢰도:', '위험도:',
         'Market Regime:', '  - Regime:', 'Sector Rotation:', '  - Target:',
+        'Trade Plan:', '  - 진입 기준가:', '  - 목표 매도가:', '  - 손절가:',
+        '  - 최대 보유:', '  - 트레일링 스탑:',
         'Decision Breakdown:', '  - pattern_contribution:', '  - hold_contribution:',
         '  - market_contribution:', '  - sector_adjustment:', '  - regime_adjustment:',
         '  - risk_penalty:', '시장 우호도:', '업종 ETF:', 'Pattern Rarity:',

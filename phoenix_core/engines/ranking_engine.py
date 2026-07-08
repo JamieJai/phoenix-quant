@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..interfaces import Engine
 from ..models import RankingInput, RankingItem, RankingResult
-from ..pipeline import analyze_ticker_quiet
+from ..pipeline import analyze_ticker_quiet, build_trade_plan
 from ..registry import EngineRegistry
 
 
@@ -30,6 +30,7 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     raw_data=input_data.raw_data,
                     prebuilt=input_data.prebuilt,
                 )
+                trade_plan = build_trade_plan(meta["latest_close"], input_data.config)
                 items.append(RankingItem(
                     ticker=ticker,
                     as_of=decision.as_of,
@@ -41,6 +42,10 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     sector_score=decision.sub_scores.get("sector_rotation_score", decision.sub_scores.get("market_score", 0.0)),
                     pattern_rarity=decision.sub_scores.get("anomaly_percentile", 0.0),
                     hit_rate_5d=decision.success_rate_5d,
+                    entry_price=float(trade_plan["entry_price"]),
+                    take_profit_price=float(trade_plan["take_profit_price"]),
+                    stop_loss_price=float(trade_plan["stop_loss_price"]),
+                    max_hold_days=int(trade_plan["max_hold_days"]),
                 ))
             except Exception as exc:  # noqa: BLE001
                 if input_data.verbose:

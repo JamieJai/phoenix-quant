@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Tuple
 
-from .trade_models import ExitReason, SameDayRule, TradeConfig
+from .trade_models import EntryMode, ExitReason, SameDayRule, TradeConfig
 
 
 def normalize_config(config: TradeConfig | None = None, **overrides) -> TradeConfig:
@@ -12,6 +12,8 @@ def normalize_config(config: TradeConfig | None = None, **overrides) -> TradeCon
     if overrides:
         cfg = replace(cfg, **{k: v for k, v in overrides.items() if v is not None})
 
+    if isinstance(cfg.entry_mode, str):
+        cfg.entry_mode = EntryMode(cfg.entry_mode)
     if isinstance(cfg.same_day_rule, str):
         cfg.same_day_rule = SameDayRule(cfg.same_day_rule)
     return cfg

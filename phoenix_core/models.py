@@ -103,6 +103,10 @@ class RankingItem:
     sector_score: float
     pattern_rarity: float
     hit_rate_5d: float
+    entry_price: float = 0.0
+    take_profit_price: float = 0.0
+    stop_loss_price: float = 0.0
+    max_hold_days: int = 0
 
 
 @dataclass

@@ -25,6 +25,8 @@ from .models import (
     SimilarityQuery,
 )
 from .registry import EngineRegistry
+from .trade import EntryMode, SameDayRule, TradeConfig
+from .trade.trade_rules import normalize_config, stop_loss_price, take_profit_price, trailing_stop_price
 
 
 PHOENIX_QUANT_VERSION = "v2.1.1"
@@ -214,6 +216,7 @@ def analyze_ticker(config: AppConfig, ticker: str, period: str = "3y", refresh: 
         regime_result=meta["regime_result"],
         sector_rotation=meta["sector_rotation"],
         correlation_result=meta["correlation_result"],
+        trade_plan=build_trade_plan(meta["latest_close"], config),
     )
     report_path = os.path.join(config.reports_dir, f"{ticker}_{decision.as_of}.txt")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -282,8 +285,64 @@ def _format_breakdown(breakdown: dict[str, float], total_label: str | None = Non
     return "\n".join(lines)
 
 
+def build_trade_config(config: AppConfig) -> TradeConfig:
+    raw = getattr(config, "trade", {}) or {}
+    cfg = TradeConfig(
+        take_profit=float(raw.get("take_profit", 0.05)),
+        stop_loss=float(raw.get("stop_loss", 0.03)),
+        max_hold_days=int(raw.get("max_hold_days", 5)),
+        trailing_stop=raw.get("trailing_stop"),
+        entry_mode=raw.get("entry_mode", EntryMode.CLOSE),
+        same_day_rule=raw.get("same_day_rule", SameDayRule.STOP_FIRST),
+        fee_bps=float(raw.get("fee_bps", 1.5)),
+        slippage_bps=float(raw.get("slippage_bps", 5.0)),
+    )
+    return normalize_config(cfg)
+
+
+def build_trade_plan(reference_price: float, config: AppConfig) -> dict[str, float | int | str | None]:
+    cfg = build_trade_config(config)
+    entry_price = float(reference_price)
+    tr_price = trailing_stop_price(entry_price, cfg)
+    entry_mode = cfg.entry_mode.value if hasattr(cfg.entry_mode, "value") else str(cfg.entry_mode)
+    entry_label = "기준일 종가"
+    if cfg.entry_mode == EntryMode.NEXT_OPEN:
+        entry_label = "다음 장 시가 기준(현재 기준가로 가격대 산정)"
+    return {
+        "entry_price": entry_price,
+        "entry_label": entry_label,
+        "entry_mode": entry_mode,
+        "take_profit_price": take_profit_price(entry_price, cfg),
+        "stop_loss_price": stop_loss_price(entry_price, cfg),
+        "trailing_stop_price": tr_price,
+        "take_profit_pct": float(cfg.take_profit),
+        "stop_loss_pct": float(cfg.stop_loss),
+        "trailing_stop_pct": float(cfg.trailing_stop) if cfg.trailing_stop is not None else None,
+        "max_hold_days": int(cfg.max_hold_days),
+        "round_trip_cost_pct": float(cfg.round_trip_cost()),
+    }
+
+
+def _format_trade_plan(trade_plan: dict | None) -> list[str]:
+    if not trade_plan:
+        return []
+    lines = [
+        "Trade Plan:",
+        f"  - 진입 기준가: ${trade_plan['entry_price']:.2f} ({trade_plan['entry_label']})",
+        f"  - 목표 매도가: ${trade_plan['take_profit_price']:.2f} (+{trade_plan['take_profit_pct'] * 100:.1f}%)",
+        f"  - 손절가: ${trade_plan['stop_loss_price']:.2f} (-{trade_plan['stop_loss_pct'] * 100:.1f}%)",
+        f"  - 최대 보유: {trade_plan['max_hold_days']}거래일 / 예상 왕복비용: {trade_plan['round_trip_cost_pct'] * 100:.2f}%",
+    ]
+    if trade_plan.get("trailing_stop_price") is not None:
+        lines.append(
+            f"  - 트레일링 스탑: ${trade_plan['trailing_stop_price']:.2f} (-{trade_plan['trailing_stop_pct'] * 100:.1f}% from high)"
+        )
+    lines.append("")
+    return lines
+
+
 def render_report(ticker, latest_close, sector_etf, market_context, similarity_result, decision,
-                  regime_result=None, sector_rotation=None, correlation_result=None) -> str:
+                  regime_result=None, sector_rotation=None, correlation_result=None, trade_plan=None) -> str:
     stars = lambda score: "★" * int(round(score / 20)) + "☆" * (5 - int(round(score / 20)))
     display_neighbors = _unique_similar_cases(similarity_result.neighbors[:30], max_cases=5, per_ticker_limit=1)
     similar_cases = "\n".join(
@@ -336,6 +395,7 @@ def render_report(ticker, latest_close, sector_etf, market_context, similarity_r
         *regime_lines,
         *sector_lines,
         *corr_lines,
+        *_format_trade_plan(trade_plan),
         "Decision Breakdown:",
         _format_breakdown(decision.score_breakdown, f"최종 {decision.suitability_score:.1f}/100"),
         "",
@@ -367,13 +427,14 @@ def render_ranking_report(ranking) -> str:
         "━━━━━━━━━━━━━━━━━━━━",
         f"기준일: {ranking.as_of}",
         "",
-        "Rank | Ticker | Suitability | Confidence | Risk | Market | Sector | Pattern Rarity | 5D Hit | Label",
+        "Rank | Ticker | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label",
     ]
     for i, item in enumerate(ranking.items, start=1):
         lines.append(
             f"{i:>2} | {item.ticker:<6} | {item.suitability_score:>5.1f} | {item.confidence_score:>5.1f} | "
-            f"{item.risk_score:>5.1f} | {item.market_score:>5.1f} | {item.sector_score:>5.1f} | "
-            f"{item.pattern_rarity:>5.1f} | {item.hit_rate_5d*100:>5.0f}% | {item.label}"
+            f"{item.risk_score:>5.1f} | {item.market_score:>5.1f} | "
+            f"${item.entry_price:>7.2f} | ${item.take_profit_price:>7.2f} | ${item.stop_loss_price:>7.2f} | "
+            f"{item.max_hold_days:>2}d | {item.hit_rate_5d*100:>5.0f}% | {item.label}"
         )
     lines += ["", "※ Ranking은 같은 기준의 상대 비교용이며 투자 자문이 아닙니다."]
     return "\n".join(lines)

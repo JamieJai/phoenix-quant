@@ -101,3 +101,14 @@ backtest:
   horizons_days: [5, 10]
   thresholds_pct: [0.05, 0.10]
   min_trades_for_confidence: 20
+
+trade:
+  # Report-only default trade plan. Tune with benchmark.py before changing production defaults.
+  take_profit: 0.05
+  stop_loss: 0.03
+  max_hold_days: 5
+  trailing_stop:
+  entry_mode: close
+  same_day_rule: stop_first
+  fee_bps: 1.5
+  slippage_bps: 5.0

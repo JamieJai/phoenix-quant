@@ -22,6 +22,7 @@ class AppConfig:
     similarity_k: int = 50
     similarity_threshold: float = 0.80
     backtest: Dict[str, Any] = field(default_factory=dict)
+    trade: Dict[str, Any] = field(default_factory=dict)
 
     def sector_etf_for(self, ticker: str) -> str:
         return self.sector_etf_map.get(ticker.upper(), self.default_sector_etf)
@@ -52,4 +53,5 @@ def load_config(path: str | Path = "config/config.yaml") -> AppConfig:
         similarity_k=int(raw.get("similarity_k", 50)),
         similarity_threshold=float(raw.get("similarity_threshold", 0.80)),
         backtest=raw.get("backtest", {}),
+        trade=raw.get("trade", {}),
     )
