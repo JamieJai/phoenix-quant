@@ -15,6 +15,7 @@ from phoenix_core.config import load_config
 from phoenix_core.default_features import BASELINE_FEATURE_NAMES
 from phoenix_core.engines.feature_engine import CatalogFeatureEngine
 from phoenix_core.engines.intraday_context_engine import IntradayContext
+from phoenix_core.engines.statistical_validation_engine import StatisticalValidationEngine, ValidationConfig
 from phoenix_core.labels import compute_forward_labels
 from phoenix_core.intraday_features import INTRADAY_FEATURE_NAMES, build_intraday_feature_dict
 from phoenix_core.intraday_feature_store import append_intraday_feature_rows, load_intraday_feature_cache
@@ -85,6 +86,15 @@ def main():
     assert labels["fwd_max_ret_10d"].tail(10).isna().all()
     assert labels["hit_10pct_10d"].tail(10).isna().all()
     print("label NaN propagation ok")
+
+    validation_engine = StatisticalValidationEngine(ValidationConfig(bootstrap_iterations=0))
+    ci_low, ci_high = validation_engine.block_bootstrap_ci(
+        pd.DataFrame({"as_of": ["2024-01-01", "2024-01-01", "2024-01-02"], "ret": [0.01, 0.03, -0.01]}),
+        value_col="ret",
+        group_col="as_of",
+    )
+    assert np.isclose(ci_low, 0.01) and np.isclose(ci_high, 0.01)
+    print("statistical validation zero-bootstrap fallback ok")
 
     # Leakage check: 미래 구간을 바꿔도 과거 시점 feature가 변하지 않아야 함.
     df_a = raw[target].copy()

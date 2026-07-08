@@ -149,9 +149,15 @@ class StatisticalValidationEngine:
         if not groups:
             return 0.0, 0.0
 
+        iterations = int(self.config.bootstrap_iterations)
+        if iterations <= 0:
+            observed_values = np.concatenate(groups)
+            observed_mean = float(np.mean(observed_values)) if len(observed_values) else 0.0
+            return observed_mean, observed_mean
+
         boot_means = []
         n_groups = len(groups)
-        for _ in range(int(self.config.bootstrap_iterations)):
+        for _ in range(iterations):
             sampled_idx = self.rng.choice(n_groups, size=n_groups, replace=True)
             sampled = np.concatenate([groups[int(i)] for i in sampled_idx])
             boot_means.append(float(np.mean(sampled)))
