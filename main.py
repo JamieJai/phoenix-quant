@@ -7,8 +7,11 @@ from phoenix_core.config import load_config
 from phoenix_core.pipeline import analyze_ticker, rank_universe
 
 
+PHOENIX_QUANT_VERSION = "v2.1.1"
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Phoenix Quant v1.2 - 설명 가능한 퀀트 리서치 플랫폼")
+    parser = argparse.ArgumentParser(description=f"Phoenix Quant {PHOENIX_QUANT_VERSION} - 설명 가능한 퀀트 리서치 플랫폼")
     parser.add_argument("--ticker", help="분석할 티커 예: MRVL")
     parser.add_argument("--top", action="store_true", help="Universe 전체 랭킹 출력")
     parser.add_argument("--top-n", type=int, default=20, help="--top 사용 시 출력할 상위 개수")

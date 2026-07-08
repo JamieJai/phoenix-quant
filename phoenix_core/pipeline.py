@@ -27,6 +27,9 @@ from .models import (
 from .registry import EngineRegistry
 
 
+PHOENIX_QUANT_VERSION = "v2.1.1"
+
+
 def build_pattern_records(raw_data: Dict[str, pd.DataFrame], feature_engine, feature_names: List[str] | None = None) -> List[PatternRecord]:
     feature_names = feature_names or BASELINE_FEATURE_NAMES
     records: list[PatternRecord] = []
@@ -320,7 +323,7 @@ def render_report(ticker, latest_close, sector_etf, market_context, similarity_r
             corr_lines = ["Correlation Map:", f"  - 90D strongest: {txt}", ""]
 
     return "\n".join([
-        "Phoenix Quant v1.2",
+        f"Phoenix Quant {PHOENIX_QUANT_VERSION}",
         "━━━━━━━━━━━━━━━━━━━━",
         f"Ticker: {ticker}",
         f"기준일: {decision.as_of}",
@@ -360,7 +363,7 @@ def render_report(ticker, latest_close, sector_etf, market_context, similarity_r
 
 def render_ranking_report(ranking) -> str:
     lines = [
-        "Phoenix Quant v1.2 Ranking",
+        f"Phoenix Quant {PHOENIX_QUANT_VERSION} Ranking",
         "━━━━━━━━━━━━━━━━━━━━",
         f"기준일: {ranking.as_of}",
         "",

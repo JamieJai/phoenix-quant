@@ -44,11 +44,11 @@ Phoenix Quant는 미국 주식 후보를 일봉 기반 통계 분석과 장중 �
 현재 기준 권장 구성은 다음과 같습니다.
 
 ```text
-Phoenix Quant Core: v1.2 report format 유지
+Phoenix Quant Platform: v2.1.1
 Benchmark / Validation: v2.0.1
 Telegram Bot: v0.4
 Intraday Context Layer: v2.1
-Compact Analyze Hotfix: v2.1.1
+Report Format: legacy v1.2-compatible
 ```
 
 현재 Telegram 명령어는 다음을 지원합니다.
