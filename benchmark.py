@@ -63,6 +63,7 @@ class BenchmarkConfig:
     min_price: float
     max_gap_open: Optional[float]
     entry_penalty_bps: float
+    resume_dir: Optional[str]
     train_test: bool
     train_start: Optional[str]
     train_end: Optional[str]
@@ -1358,6 +1359,60 @@ code {{ background: #f5f5f5; padding: 2px 5px; border-radius: 4px; }}
         f.write(html)
 
 
+def _benchmark_output_paths(out_dir: str) -> Dict[str, str]:
+    return {
+        "summary": os.path.join(out_dir, "benchmark_summary.csv"),
+        "detail": os.path.join(out_dir, "benchmark_detail.csv"),
+        "ranked_detail": os.path.join(out_dir, "benchmark_ranked_detail.csv"),
+        "candidates": os.path.join(out_dir, "benchmark_candidates.csv"),
+        "top_list": os.path.join(out_dir, "benchmark_top_list.csv"),
+        "random": os.path.join(out_dir, "benchmark_random_baseline.csv"),
+        "alpha": os.path.join(out_dir, "benchmark_alpha.csv"),
+        "trade": os.path.join(out_dir, "benchmark_trade_sim.csv"),
+        "trade_summary": os.path.join(out_dir, "benchmark_trade_summary.csv"),
+        "trade_random_distribution": os.path.join(out_dir, "benchmark_trade_random_distribution.csv"),
+        "portfolio_by_date": os.path.join(out_dir, "benchmark_portfolio_by_date.csv"),
+        "grid_search": os.path.join(out_dir, "benchmark_trade_grid_search.csv"),
+        "statistics": os.path.join(out_dir, "benchmark_statistics.csv"),
+        "random_distribution": os.path.join(out_dir, "benchmark_random_distribution.csv"),
+        "daily": os.path.join(out_dir, "benchmark_daily.csv"),
+        "monthly": os.path.join(out_dir, "benchmark_monthly.csv"),
+        "bucket": os.path.join(out_dir, "benchmark_score_buckets.csv"),
+        "failed": os.path.join(out_dir, "benchmark_failed_dates.csv"),
+        "html": os.path.join(out_dir, "benchmark_report.html"),
+        "partial_candidates": os.path.join(out_dir, "benchmark_candidates_partial.csv"),
+        "partial_ranked_detail": os.path.join(out_dir, "benchmark_ranked_detail_partial.csv"),
+        "partial_failed": os.path.join(out_dir, "benchmark_failed_dates_partial.csv"),
+    }
+
+
+def _read_partial_rows(path: str) -> List[Dict[str, Any]]:
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return []
+    try:
+        return pd.read_csv(path).to_dict("records")
+    except pd.errors.EmptyDataError:
+        return []
+
+
+def _write_benchmark_partials(paths: Dict[str, str], candidate_rows: List[Dict[str, Any]], detail_rows: List[Dict[str, Any]], failed_dates: List[Dict[str, str]]) -> None:
+    pd.DataFrame(candidate_rows).to_csv(paths["partial_candidates"], index=False, encoding="utf-8-sig")
+    pd.DataFrame(detail_rows).to_csv(paths["partial_ranked_detail"], index=False, encoding="utf-8-sig")
+    pd.DataFrame(failed_dates).to_csv(paths["partial_failed"], index=False, encoding="utf-8-sig")
+
+
+def _completed_partial_dates(candidate_rows: List[Dict[str, Any]], detail_rows: List[Dict[str, Any]], failed_dates: List[Dict[str, str]]) -> set[str]:
+    completed: set[str] = set()
+    for rows in (candidate_rows, detail_rows):
+        for row in rows:
+            if "as_of" in row and pd.notna(row.get("as_of")):
+                completed.add(pd.Timestamp(row["as_of"]).date().isoformat())
+    for row in failed_dates:
+        if "as_of" in row and pd.notna(row.get("as_of")):
+            completed.add(pd.Timestamp(row["as_of"]).date().isoformat())
+    return completed
+
+
 def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, Any]:
     bootstrap.init()
     _ensure_dirs(app_config)
@@ -1370,14 +1425,31 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     dates = _select_asof_dates(full_raw["SPY"], bench.start, bench.end, bench.frequency, bench.max_dates)
     print(f"[2/5] 기준일 {len(dates)}개 선택됨 ({bench.frequency})")
 
-    detail_rows: List[Dict[str, Any]] = []
-    candidate_rows: List[Dict[str, Any]] = []
-    failed_dates: List[Dict[str, str]] = []
+    if bench.resume_dir:
+        out_dir = bench.resume_dir
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"  [resume] 기존 benchmark 디렉터리 사용: {out_dir}")
+    else:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.join(app_config.reports_dir, f"benchmark_{stamp}")
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"  [checkpoint] partial 저장 위치: {out_dir}")
+    paths = _benchmark_output_paths(out_dir)
+
+    detail_rows: List[Dict[str, Any]] = _read_partial_rows(paths["partial_ranked_detail"])
+    candidate_rows: List[Dict[str, Any]] = _read_partial_rows(paths["partial_candidates"])
+    failed_dates: List[Dict[str, str]] = _read_partial_rows(paths["partial_failed"])
+    completed_dates = _completed_partial_dates(candidate_rows, detail_rows, failed_dates)
+    if completed_dates:
+        print(f"  [resume] 완료된 기준일 {len(completed_dates)}개 로드")
     top_values = _parse_top_list(bench.top_list, bench.top_n)
     max_top_n = max(top_values)
 
     for i, as_of in enumerate(dates, start=1):
         as_of_str = as_of.date().isoformat()
+        if as_of_str in completed_dates:
+            print(f"[asof {i}/{len(dates)}] {as_of_str} skip (partial exists)")
+            continue
         print(f"[asof {i}/{len(dates)}] {as_of_str}")
         try:
             train_raw = _slice_raw_until(full_raw, as_of)
@@ -1407,8 +1479,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
                 candidate_rows.append(row)
                 if rank <= max_top_n:
                     detail_rows.append(row)
+            completed_dates.add(as_of_str)
+            _write_benchmark_partials(paths, candidate_rows, detail_rows, failed_dates)
+            print(f"  [checkpoint] saved partial ({len(completed_dates)}/{len(dates)})")
         except Exception as exc:  # noqa: BLE001
             failed_dates.append({"as_of": as_of_str, "error": str(exc)})
+            completed_dates.add(as_of_str)
+            _write_benchmark_partials(paths, candidate_rows, detail_rows, failed_dates)
             print(f"  [warn] {as_of_str} 실패: {exc}")
 
     print("[3/5] 결과 집계 중...")
@@ -1548,32 +1625,7 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
     summary["failed_dates"] = len(failed_dates)
     summary_df = pd.DataFrame([summary])
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = os.path.join(app_config.reports_dir, f"benchmark_{stamp}")
-    os.makedirs(out_dir, exist_ok=True)
-
     print("[4/5] CSV/HTML 저장 중...")
-    paths = {
-        "summary": os.path.join(out_dir, "benchmark_summary.csv"),
-        "detail": os.path.join(out_dir, "benchmark_detail.csv"),
-        "ranked_detail": os.path.join(out_dir, "benchmark_ranked_detail.csv"),
-        "candidates": os.path.join(out_dir, "benchmark_candidates.csv"),
-        "top_list": os.path.join(out_dir, "benchmark_top_list.csv"),
-        "random": os.path.join(out_dir, "benchmark_random_baseline.csv"),
-        "alpha": os.path.join(out_dir, "benchmark_alpha.csv"),
-        "trade": os.path.join(out_dir, "benchmark_trade_sim.csv"),
-        "trade_summary": os.path.join(out_dir, "benchmark_trade_summary.csv"),
-        "trade_random_distribution": os.path.join(out_dir, "benchmark_trade_random_distribution.csv"),
-        "portfolio_by_date": os.path.join(out_dir, "benchmark_portfolio_by_date.csv"),
-        "grid_search": os.path.join(out_dir, "benchmark_trade_grid_search.csv"),
-        "statistics": os.path.join(out_dir, "benchmark_statistics.csv"),
-        "random_distribution": os.path.join(out_dir, "benchmark_random_distribution.csv"),
-        "daily": os.path.join(out_dir, "benchmark_daily.csv"),
-        "monthly": os.path.join(out_dir, "benchmark_monthly.csv"),
-        "bucket": os.path.join(out_dir, "benchmark_score_buckets.csv"),
-        "failed": os.path.join(out_dir, "benchmark_failed_dates.csv"),
-        "html": os.path.join(out_dir, "benchmark_report.html"),
-    }
     summary_df.to_csv(paths["summary"], index=False, encoding="utf-8-sig")
     detail_df.to_csv(paths["detail"], index=False, encoding="utf-8-sig")
     ranked_detail_df.to_csv(paths["ranked_detail"], index=False, encoding="utf-8-sig")
@@ -1901,6 +1953,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-price", type=float, default=0.0, help="실행 필터용 as_of 기준 최소 주가. 실패 시 cash slot")
     p.add_argument("--max-gap-open", type=float, default=None, help="next_open gap-up 최대 허용값. 예: 0.08 = +8%% 초과 시 cash slot")
     p.add_argument("--entry-penalty-bps", type=float, default=0.0, help="next_open 진입 보수성 페널티 bps. 수익률에서 추가 차감")
+    p.add_argument("--resume-dir", default=None, help="partial CSV가 있는 benchmark 디렉터리에서 이어서 실행")
     p.add_argument("--train-test", action="store_true", help="v2.0 Purged Train/Test Validation 실행")
     p.add_argument("--train-start", default=None, help="Train 시작일 YYYY-MM-DD")
     p.add_argument("--train-end", default=None, help="Train 종료일 YYYY-MM-DD")
@@ -1948,6 +2001,7 @@ def main() -> None:
         min_price=args.min_price,
         max_gap_open=args.max_gap_open,
         entry_penalty_bps=args.entry_penalty_bps,
+        resume_dir=args.resume_dir,
         train_test=args.train_test,
         train_start=args.train_start,
         train_end=args.train_end,
