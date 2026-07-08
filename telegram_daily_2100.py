@@ -35,8 +35,14 @@ def _daily_hour() -> int:
     return max(0, min(hour, 23))
 
 
-def run_daily_once():
+def run_daily_once(force: bool = False):
     load_env_file('.env')
+    if not force and _env_bool('PHOENIX_DAILY_SEND_ONLY_AT_CONFIGURED_HOUR', True):
+        now = datetime.now(KST)
+        expected_hour = _daily_hour()
+        if now.hour != expected_hour:
+            print(f'Daily alert skipped: now={now.hour:02d}:00 KST expected={expected_hour:02d}:00 KST')
+            return
     project_dir=Path(os.getenv('PHOENIX_PROJECT_DIR','.')).resolve(); py=os.getenv('PHOENIX_PYTHON',sys.executable)
     timeout=int(os.getenv('PHOENIX_DAILY_TIMEOUT',os.getenv('PHOENIX_COMMAND_TIMEOUT','600')))
     top_n=int(os.getenv('PHOENIX_DAILY_TOP_N',os.getenv('PHOENIX_TOP_N','5'))); scan_n=int(os.getenv('PHOENIX_DAILY_SCAN_N',str(top_n)))
@@ -73,6 +79,6 @@ def run_loop():
             except Exception as e: _send(f'⚠️ Daily job error\n\n{type(e).__name__}: {e}'); last=today
         time.sleep(20)
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--once',action='store_true'); args=ap.parse_args()
-    run_daily_once() if args.once else run_loop()
+    ap=argparse.ArgumentParser(); ap.add_argument('--once',action='store_true'); ap.add_argument('--force',action='store_true'); args=ap.parse_args()
+    run_daily_once(force=args.force) if args.once else run_loop()
 if __name__=='__main__': main()
