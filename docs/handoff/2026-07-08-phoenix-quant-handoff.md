@@ -174,3 +174,46 @@ The smoke run is not enough. The current change only gives the project the tooli
 
 Do not claim improvement from one combined change.
 Each feature must be independently toggled and re-tested with purged train/test OOS validation.
+
+
+## 2026-07-09 Rank-Mode OOS Update
+
+Full purged train/test rank-mode comparison was run with the prior long OOS window:
+
+- Command shape:
+  `benchmark.py --train-test --train-start 2023-01-01 --train-end 2024-12-20 --test-start 2025-01-16 --test-end 2026-07-06 --period 5y --frequency monthly --top-n 10 --random-baseline 1000 --bootstrap 1000 --min-price 5 --min-dollar-volume 10000000 --max-gap-open 0.08 --entry-penalty-bps 20 --rank-mode both --xgb-blend-weight 0.0,0.1,0.2,0.3,0.4,0.5`
+- Train report:
+  `reports/benchmark_20260709_091409`
+- Test report:
+  `reports/benchmark_20260709_094256`
+- Train/test wrapper:
+  `reports/benchmark_train_test_20260709_101317`
+
+### Test Rank-Mode Comparison
+
+From `reports/benchmark_20260709_094256/benchmark_rank_mode_comparison.csv`:
+
+| rank_mode | xgb_weight | portfolio_mean | random_mean | alpha | p_value | mdd |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| decision | 0.0 | 0.006347 | 0.004734 | 0.001614 | 0.2687 | 0.0587 |
+| ranking | 0.0 | 0.006347 | 0.004734 | 0.001614 | 0.2687 | 0.0587 |
+| ranking | 0.1 | 0.006112 | 0.004734 | 0.001378 | 0.3007 | 0.0529 |
+| ranking | 0.2 | 0.005576 | 0.004734 | 0.000843 | 0.3616 | 0.0529 |
+| ranking | 0.3 | 0.003910 | 0.004734 | -0.000823 | 0.6274 | 0.0577 |
+| ranking | 0.4 | 0.003899 | 0.004734 | -0.000834 | 0.6294 | 0.0606 |
+| ranking | 0.5 | 0.004805 | 0.004734 | 0.000071 | 0.4785 | 0.0628 |
+
+### Interpretation
+
+- `decision` and `ranking w=0.0` are identical, as expected.
+- In train, higher XGB weights looked better, but the pattern did not hold in test.
+- In this OOS window, production-like `ranking w=0.30` did not beat decision-only ranking.
+- Do not claim XGB-assisted ranking improves OOS from this result.
+
+### Next Recommended Action
+
+Before changing production ranking, either:
+
+1. Run at least one more purged OOS window / rolling split to confirm the result.
+2. If the same pattern holds, consider setting production `xgb_blend_weight` to `0.0` or making XGB-assisted ranking feature-flagged.
+3. Keep similarity cluster dedupe as a separate experiment after rank-mode policy is decided.

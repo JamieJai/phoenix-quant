@@ -1,0 +1,2 @@
+feedback_date,as_of_date,ticker,source,rank,decision,outcome_label,observed_1d_return,observed_5d_return,observed_10d_return,reason_category,market_context,notes
+2026-07-09,2026-07-09,NVDA,telegram_top,1,watch,good,0.012,0.045,0.071,trend_following,semis strong,"example row - replace with real feedback"

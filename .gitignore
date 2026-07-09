@@ -20,6 +20,7 @@ ENV/
 .env
 .env.*
 !.env.example
+config/phoenix_auto_cycle.env
 
 # =========================
 # Phoenix generated files

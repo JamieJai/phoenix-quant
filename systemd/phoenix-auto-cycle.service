@@ -1,0 +1,11 @@
+[Unit]
+Description=Phoenix Quant automatic validation and model promotion cycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/sysadmin/phoenix_ai_core_mvp
+EnvironmentFile=-/home/sysadmin/phoenix_ai_core_mvp/config/phoenix_auto_cycle.env
+ExecStart=/home/sysadmin/phoenix_ai_core_mvp/scripts/phoenix_auto_cycle.sh
+Nice=10

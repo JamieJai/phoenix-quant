@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Phoenix Quant automatic validation cycle hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=phoenix-auto-cycle.service
+
+[Install]
+WantedBy=timers.target
