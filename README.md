@@ -72,6 +72,16 @@ Report Format: legacy v1.2-compatible
 
 ---
 
+## 2.1 일봉 데이터 캐시
+
+학습/랭킹 전에 설정된 유니버스와 시장 ETF의 일봉 OHLCV를 로컬 `data/` 캐시에 내려받습니다.
+
+```bash
+.venv/bin/python scripts/fetch_daily_data.py --period 5y --refresh
+```
+
+실행 후 `data/daily_data_manifest.csv`에 티커별 행 수, 최신 일자, stale 여부가 기록됩니다.
+
 ## 3. 핵심 기능
 
 ### 3.1 Daily Top 5 알림

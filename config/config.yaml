@@ -14,47 +14,106 @@ engines:
   ranking_engine: ranking_v1
 
 universe:
-  - AAPL
   - MSFT
-  - NVDA
   - AMZN
   - GOOGL
   - META
-  - AVGO
-  - TSLA
-  - AMD
-  - NFLX
+  - ORCL
+  - IBM
+  - CRM
+  - NOW
   - ADBE
-  - COST
-  - PEP
-  - CSCO
+  - SNOW
+  - PLTR
+  - APP
+  - NVDA
+  - AMD
+  - AVGO
+  - MRVL
+  - MU
   - INTC
   - QCOM
+  - ARM
   - TXN
+  - ADI
+  - MCHP
+  - MPWR
+  - "ON"
+  - NXPI
+  - TSM
+  - ASML
   - AMAT
-  - MU
   - LRCX
   - KLAC
-  - MRVL
-  - PANW
-  - CRWD
-  - PLTR
-  - SNPS
+  - TER
   - CDNS
-  - ASML
-  - ABNB
-  - BKNG
-  - ISRG
-  - REGN
-  - VRTX
-  - GILD
-  - SBUX
-  - MDLZ
-  - ADI
-  - PYPL
-  - INTU
-  - ORLY
-
+  - SNPS
+  - AEIS
+  - MKSI
+  - COHR
+  - ENTG
+  - ACMR
+  - SNDK
+  - WDC
+  - STX
+  - ANET
+  - CSCO
+  - CIEN
+  - LITE
+  - GLW
+  - FN
+  - HPE
+  - NTAP
+  - CLS
+  - UI
+  - CRWV
+  - IREN
+  - VRT
+  - ETN
+  - PWR
+  - DELL
+  - SMCI
+  - DLR
+  - EQIX
+  - AMT
+  - AKAM
+  - NET
+  - DDOG
+  - GEV
+  - CEG
+  - VST
+  - NEE
+  - DUK
+  - SO
+  - EXC
+  - PEG
+  - D
+  - AEP
+  - PCG
+  - TLN
+  - NRG
+  - EIX
+  - CCJ
+  - BWXT
+  - LEU
+  - UUUU
+  - NXE
+  - UEC
+  - DNN
+  - SMR
+  - OKLO
+  - NNE
+  - TT
+  - JCI
+  - CARR
+  - HUBB
+  - WCC
+  - APH
+  - TEL
+  - FLEX
+  - JBL
+  - SANM
+  - ROK
 market_etfs:
   - SPY
   - QQQ
@@ -73,23 +132,111 @@ market_etfs:
   - XLU
   - XLB
   - XLRE
+  - URA
+  - NLR
   - "^VIX"
 
 sector_etf_map:
+  MSFT: XLK
+  AMZN: XLY
+  GOOGL: XLC
+  META: XLC
+  ORCL: XLK
+  IBM: XLK
+  CRM: XLK
+  NOW: XLK
+  ADBE: XLK
+  SNOW: XLK
+  PLTR: XLK
+  APP: XLK
   NVDA: SMH
   AMD: SMH
   AVGO: SMH
-  QCOM: SMH
-  TXN: SMH
-  AMAT: SOXX
+  MRVL: SOXX
   MU: SOXX
+  INTC: SOXX
+  QCOM: SMH
+  ARM: SMH
+  TXN: SMH
+  ADI: SOXX
+  MCHP: SOXX
+  MPWR: SOXX
+  "ON": SOXX
+  NXPI: SOXX
+  TSM: SMH
+  ASML: SMH
+  AMAT: SOXX
   LRCX: SOXX
   KLAC: SOXX
-  MRVL: SOXX
-  ASML: SMH
-  ADI: SOXX
-  INTC: SOXX
-
+  TER: SOXX
+  CDNS: XLK
+  SNPS: XLK
+  AEIS: SOXX
+  MKSI: SOXX
+  COHR: SOXX
+  ENTG: SOXX
+  ACMR: SOXX
+  SNDK: SOXX
+  WDC: SOXX
+  STX: SOXX
+  ANET: XLK
+  CSCO: XLK
+  CIEN: XLK
+  LITE: SOXX
+  GLW: XLK
+  FN: XLK
+  HPE: XLK
+  NTAP: XLK
+  CLS: XLK
+  UI: XLK
+  CRWV: XLK
+  IREN: XLK
+  VRT: XLI
+  ETN: XLI
+  PWR: XLI
+  DELL: XLK
+  SMCI: XLK
+  DLR: XLRE
+  EQIX: XLRE
+  AMT: XLRE
+  AKAM: XLK
+  NET: XLK
+  DDOG: XLK
+  GEV: XLI
+  CEG: XLU
+  VST: XLU
+  NEE: XLU
+  DUK: XLU
+  SO: XLU
+  EXC: XLU
+  PEG: XLU
+  D: XLU
+  AEP: XLU
+  PCG: XLU
+  TLN: XLU
+  NRG: XLU
+  EIX: XLU
+  CCJ: URA
+  BWXT: NLR
+  LEU: URA
+  UUUU: URA
+  NXE: URA
+  UEC: URA
+  DNN: URA
+  SMR: NLR
+  OKLO: NLR
+  NNE: NLR
+  TT: XLI
+  JCI: XLI
+  CARR: XLI
+  HUBB: XLI
+  WCC: XLI
+  APH: XLI
+  TEL: XLI
+  FLEX: XLK
+  JBL: XLK
+  SANM: XLK
+  ROK: XLI
 default_sector_etf: QQQ
 cache_dir: data
 models_dir: models
