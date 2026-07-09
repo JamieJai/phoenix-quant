@@ -50,7 +50,10 @@ python telegram_bot_run.py
 
 ```text
 /ping
-/top 5
+/top 5            # 일봉 기반 후보 + 별도 intraday overlay
+/toplive 10       # 실험: 장중 adjusted_score 재정렬
+/top live 10      # /toplive와 동일
+/hot 10           # 장중 강세 조건 충족 후보
 /analyze NVDA
 /regime
 /status
@@ -80,3 +83,15 @@ python telegram_daily_2100.py --once
 
 이 봇은 매매 추천/자동매매 시스템이 아닙니다.
 Phoenix Quant 결과를 텔레그램으로 전달하는 참고용 분석 보조 도구입니다.
+
+
+## 라벨 의미
+
+```text
+관심: 우선 관찰 후보
+관찰: 일부 조건 양호, 추가 확인 필요
+보류: 조건 부족, 매매 후보로 해석 금지
+제외: 제외 대상
+```
+
+`/toplive`는 OOS 검증 전 실험 기능이며 `/top` 기본 동작을 대체하지 않습니다.

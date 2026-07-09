@@ -60,6 +60,9 @@ Report Format: legacy v1.2-compatible
 /top
 /top 5
 /top 10 refresh
+/toplive 10
+/top live 10
+/hot 10
 /analyze MRVL
 /analyze MRVL refresh
 /intraday MRVL
@@ -162,7 +165,7 @@ Intraday Risk Score
 
 ### 3.4 `/top 5`
 
-기존 Top 후보 분석 결과에 Intraday Overlay를 붙입니다.
+검증된 일봉 기반 daily ranking 순서를 유지해서 후보를 보여주고, Intraday Overlay는 아래에 별도 참고 블록으로만 붙입니다. `/top`은 장중 adjusted_score로 summary를 대체하지 않습니다.
 
 예:
 
@@ -170,15 +173,38 @@ Intraday Risk Score
 /top 5
 ```
 
-출력 예시:
+출력 구성:
 
 ```text
-Top 후보 리스트
+Daily ranking summary
 +
-📡 Intraday Overlay
-1. NVDA | score 78/100 | 현재 $xxx.xx | 전일대비 +x.xx% | 5m +x.xx% | VWAP +x.xx%
-2. MRVL | score 41/100 | 현재 $xxx.xx | 전일대비 -x.xx% | 5m -x.xx% | VWAP -x.xx%
-...
+📡 Intraday Overlay (참고용, PHOENIX_INTRADAY_OVERLAY_RERANK는 이 overlay 블록 내부 정렬에만 사용)
+```
+
+### 3.5 `/toplive 10` 또는 `/top live 10`
+
+실험 기능입니다. Daily 후보를 최소 50개 이상 가져온 뒤 장중 `adjusted_score` 기준으로 재정렬합니다. 아직 OOS 검증 전이므로 `/top` 기본 동작을 대체하지 않습니다. Telegram 제목과 본문에 `실험: 장중 재정렬` 또는 `Experimental Intraday Rerank`를 표시합니다.
+
+```text
+/toplive 10
+/top live 10
+```
+
+### 3.6 `/hot 10`
+
+장중 강세 조건을 충족하는 후보만 별도로 보여줍니다. 조건은 현재가 존재, 전일대비 양수, VWAP 위, 10m 또는 30m 상승, intraday score 기준 이상입니다. 결과는 매수 추천이 아니라 `장중 관심 후보`입니다.
+
+```text
+/hot 10
+```
+
+### 3.7 라벨 의미
+
+```text
+관심: 우선 관찰 후보
+관찰: 일부 조건 양호, 추가 확인 필요
+보류: 조건 부족, 매매 후보로 해석 금지
+제외: 제외 대상
 ```
 
 ---
@@ -938,3 +964,37 @@ phoenix-telegram-bot.service: active running
 phoenix-daily-alert.timer: active waiting
 telegram_bot_run.py: 1 process only
 ```
+
+---
+
+## 8. Top Shadow Compare
+
+`/top` 실행 시 운영 로그용 shadow snapshot이 `results/top_shadow_compare/YYYYMMDD/`에 저장됩니다. 사용자에게 보이는 `/top` 결과는 daily ranking이며, shadow snapshot은 전향적 비교용입니다.
+
+명시적으로 후보와 성과 요약을 생성하려면 다음 스크립트를 사용합니다.
+
+```bash
+./.venv/bin/python scripts/top_shadow_compare.py --candidate-n 50 --top-n 10
+```
+
+산출물:
+
+```text
+results/top_shadow_compare/YYYYMMDD/legacy_candidates.csv
+results/top_shadow_compare/YYYYMMDD/toplive_candidates.csv
+results/top_shadow_compare/YYYYMMDD/hot_candidates.csv
+results/top_shadow_compare/YYYYMMDD/summary.json
+```
+
+비교 지표는 1일/3일/5일 후 수익률, 5일 내 +5% 도달률, 5일 내 -3% 먼저 도달률, 평균 최대낙폭, 후보군 간 중복 ticker 수, 라벨별 평균 성과입니다.
+
+환경변수:
+
+```text
+PHOENIX_INTRADAY_OVERLAY_RERANK: /top 아래 Intraday Overlay 블록 내부 정렬만 제어
+PHOENIX_TOP_CANDIDATE_N: /toplive, /hot, shadow compare 후보 풀 크기
+PHOENIX_HOT_INTRADAY_MIN_SCORE: /hot 최소 intraday score
+PHOENIX_TOP_SHADOW_LOG_DIR: /top shadow snapshot 저장 루트
+```
+
+`별도 top intraday rerank 변수` 같은 유사 변수는 사용하지 않습니다.

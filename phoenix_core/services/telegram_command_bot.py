@@ -1,6 +1,7 @@
 from __future__ import annotations
-import os, re, subprocess, sys, time
+import csv, json, os, re, subprocess, sys, time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from phoenix_core.engines.intraday_context_engine import IntradayContextEngine
@@ -41,6 +42,7 @@ class PhoenixTelegramBot:
         self.timeout_sec=int(os.getenv('PHOENIX_COMMAND_TIMEOUT','240')); self.default_top_n=int(os.getenv('PHOENIX_TOP_N','5'))
         self.top_candidate_pool_n=max(50,int(os.getenv('PHOENIX_TOP_CANDIDATE_N','50')))
         self.hot_min_score=int(os.getenv('PHOENIX_HOT_INTRADAY_MIN_SCORE','55'))
+        self.shadow_log_dir=Path(os.getenv('PHOENIX_TOP_SHADOW_LOG_DIR','results/top_shadow_compare'))
         self.refresh_on_analyze=_env_bool('PHOENIX_REFRESH_ON_ANALYZE',False); self.refresh_on_top=_env_bool('PHOENIX_REFRESH_ON_TOP',False)
         self.intraday_enabled=_env_bool('PHOENIX_INTRADAY_ENABLED',True); self.overlay_enabled=_env_bool('PHOENIX_TOP_INTRADAY_OVERLAY',True)
         self.overlay_max=int(os.getenv('PHOENIX_INTRADAY_OVERLAY_MAX',str(self.default_top_n)))
@@ -98,8 +100,11 @@ class PhoenixTelegramBot:
         if cmd in {'/start','/help'}: return help_message()
         if cmd=='/ping': return 'pong ✅'
         if cmd=='/status':
-            return format_status_message(bot_profile=profile.name,your_chat_id=chat_id,project_dir=self.project_dir,python=self.python_exe,timeout_sec=self.timeout_sec,default_top_n=self.default_top_n,top_candidate_pool_n=self.top_candidate_pool_n,hot_min_score=self.hot_min_score,intraday_enabled=self.intraday_enabled,intraday_overlay=self.overlay_enabled,intraday_overlay_rerank=self.intraday_overlay_rerank,intraday_feature_cache=self.intraday_feature_cache_enabled)
-        if cmd=='/top': return self._cmd_top(args,chat_id,profile)
+            return format_status_message(bot_profile=profile.name,your_chat_id=chat_id,project_dir=self.project_dir,python=self.python_exe,timeout_sec=self.timeout_sec,default_top_n=self.default_top_n,top_candidate_pool_n=self.top_candidate_pool_n,hot_min_score=self.hot_min_score,shadow_log_dir=str(self.shadow_log_dir),intraday_enabled=self.intraday_enabled,intraday_overlay=self.overlay_enabled,intraday_overlay_rerank=self.intraday_overlay_rerank,intraday_feature_cache=self.intraday_feature_cache_enabled)
+        if cmd=='/top':
+            if args and args[0].lower()=='live': return self._cmd_toplive(args[1:],chat_id,profile)
+            return self._cmd_top(args,chat_id,profile)
+        if cmd=='/toplive': return self._cmd_toplive(args,chat_id,profile)
         if cmd=='/analyze': return self._cmd_analyze(args,chat_id,profile)
         if cmd=='/intraday': return self._cmd_intraday(args,chat_id,profile)
         if cmd=='/hot': return self._cmd_hot(args,chat_id,profile)
@@ -110,19 +115,42 @@ class PhoenixTelegramBot:
         for a in args:
             if a.lower()=='refresh': refresh=True
             elif a.isdigit(): top_n=max(1,min(int(a),30))
+        cmd=[self.python_exe,'main.py','--top','--top-n',str(top_n)]
+        if refresh: cmd.append('--refresh')
+        send_chat_action_with_token(p.token,chat_id,'typing'); out=self._run(cmd)
+        rows=parse_ranking_rows(out,max_rows=top_n)
+        summary=compact_ranking_output(out, max_rows=top_n)
+        extra=''
+        contexts=[]
+        if self.intraday_enabled and self.overlay_enabled and rows:
+            tickers=extract_candidate_tickers(out,limit=self.overlay_max)
+            raw_contexts=self.intraday_engine.analyze_many(tickers) if tickers else []
+            contexts=filter_intraday_overlay_contexts(raw_contexts)
+            self._record_intraday_contexts(contexts)
+            if contexts:
+                extra='\n\n'+format_intraday_overlay(contexts,self.overlay_max,rerank=self.intraday_overlay_rerank)
+        self._write_top_shadow_log(rows,contexts,top_n,source='top')
+        return f'{header(f"Top {top_n} 후보")}\n\n{summary}{extra}\n\n{disclaimer()}'
+    def _cmd_toplive(self,args,chat_id,p):
+        top_n=self.default_top_n; refresh=self.refresh_on_top
+        for a in args:
+            if a.lower()=='refresh': refresh=True
+            elif a.isdigit(): top_n=max(1,min(int(a),30))
         candidate_n=max(self.top_candidate_pool_n,top_n,50)
         cmd=[self.python_exe,'main.py','--top','--top-n',str(candidate_n)]
         if refresh: cmd.append('--refresh')
         send_chat_action_with_token(p.token,chat_id,'typing'); out=self._run(cmd)
         rows=parse_ranking_rows(out,max_rows=candidate_n)
-        summary=compact_ranking_output(out, max_rows=top_n)
-        if self.intraday_enabled and self.overlay_enabled and rows:
+        if not rows:
+            return f'{header("실험: 장중 재정렬")}\n\n{compact_cli_output(out)}\n\n{disclaimer()}'
+        contexts=[]
+        if self.intraday_enabled:
             tickers=[r['ticker'] for r in rows]
             contexts=filter_intraday_overlay_contexts(self.intraday_engine.analyze_many(tickers))
             self._record_intraday_contexts(contexts)
-            if contexts:
-                summary=self._format_adjusted_top(rows,contexts,top_n,candidate_n)
-        return f'{header(f"Top {top_n} 후보")}\n\n{summary}\n\n{disclaimer()}'
+        summary=self._format_adjusted_top(rows,contexts,top_n,candidate_n)
+        self._write_top_shadow_log(rows,contexts,top_n,source='toplive')
+        return f'{header("실험: 장중 재정렬")}\n\nExperimental Intraday Rerank - OOS 검증 전 참고용입니다.\n{summary}\n\n{disclaimer()}'
     def _cmd_analyze(self,args,chat_id,p):
         if not args: return '사용법: /analyze NVDA'
         ticker=args[0].upper().strip()
@@ -188,7 +216,7 @@ class PhoenixTelegramBot:
             if not ctx: continue
             ranked.append((score_intraday_overlay_context(ctx,row['rank']),row,ctx))
         ranked.sort(key=lambda x:(x[0].adjusted_score,-x[1]['rank']),reverse=True)
-        lines=[f'Daily 후보 {candidate_n}개를 장중 지표로 재정렬했습니다.', 'Rank | Ticker | Adj | Daily | Intra | Label | Reason']
+        lines=[f'실험: Daily 후보 {candidate_n}개를 장중 adjusted_score로 재정렬했습니다.', 'Rank | Ticker | Adj | Daily | Intra | Label | Reason']
         for i,(item,row,ctx) in enumerate(ranked[:max_rows],1):
             label=self._overlay_label(item.adjusted_score,ctx)
             reason=self._candidate_reason(row,ctx)
@@ -235,6 +263,87 @@ class PhoenixTelegramBot:
     def _is_hot_context(self,ctx):
         momentum=((ctx.latest_10m_return_pct is not None and ctx.latest_10m_return_pct>0) or (ctx.latest_30m_return_pct is not None and ctx.latest_30m_return_pct>0))
         return bool(ctx.current_price is not None and ctx.current_vs_prev_close_pct is not None and ctx.current_vs_prev_close_pct>0 and ctx.above_vwap is True and momentum and ctx.intraday_score>=self.hot_min_score)
+    def _write_top_shadow_log(self,rows,contexts,top_n,source):
+        if not rows:
+            return
+        try:
+            date_dir=self.shadow_log_dir/datetime.now().strftime('%Y%m%d')
+            date_dir.mkdir(parents=True,exist_ok=True)
+            legacy_rows=rows[:top_n]
+            adjusted_rows=self._shadow_adjusted_rows(rows,contexts,top_n)
+            hot_rows=self._shadow_hot_rows(rows,contexts,top_n)
+            self._write_shadow_csv(date_dir/'legacy_candidates.csv',legacy_rows)
+            self._write_shadow_csv(date_dir/'toplive_candidates.csv',adjusted_rows)
+            self._write_shadow_csv(date_dir/'hot_candidates.csv',hot_rows)
+            summary={
+                'timestamp': datetime.now().isoformat(timespec='seconds'),
+                'source': source,
+                'top_n': top_n,
+                'candidate_count': len(rows),
+                'legacy_count': len(legacy_rows),
+                'toplive_count': len(adjusted_rows),
+                'hot_count': len(hot_rows),
+                'legacy_top': [r.get('ticker') for r in legacy_rows],
+                'toplive_top': [r.get('ticker') for r in adjusted_rows],
+                'hot_top': [r.get('ticker') for r in hot_rows],
+                'overlap_legacy_toplive': len(set(r.get('ticker') for r in legacy_rows)&set(r.get('ticker') for r in adjusted_rows)),
+                'overlap_legacy_hot': len(set(r.get('ticker') for r in legacy_rows)&set(r.get('ticker') for r in hot_rows)),
+                'overlap_toplive_hot': len(set(r.get('ticker') for r in adjusted_rows)&set(r.get('ticker') for r in hot_rows)),
+                'metrics_pending': ['ret_1d','ret_3d','ret_5d','hit_5pct_5d','stop_3pct_first_5d','avg_max_drawdown','label_performance'],
+            }
+            with open(date_dir/'summary.json','w',encoding='utf-8') as f:
+                json.dump(summary,f,ensure_ascii=False,indent=2)
+            print(f'[top shadow] wrote {date_dir} source={source} legacy={len(legacy_rows)} toplive={len(adjusted_rows)} hot={len(hot_rows)}')
+        except Exception as e:
+            print(f'[top shadow warn] {type(e).__name__}: {e}')
+    def _shadow_adjusted_rows(self,rows,contexts,top_n):
+        ctx_by_ticker={ctx.ticker.upper():ctx for ctx in contexts}
+        ranked=[]
+        for row in rows:
+            ctx=ctx_by_ticker.get(row['ticker'])
+            if not ctx: continue
+            item=score_intraday_overlay_context(ctx,row['rank'])
+            ranked.append((item.adjusted_score,row,ctx))
+        ranked.sort(key=lambda x:(x[0],-x[1]['rank']),reverse=True)
+        return [self._shadow_row(row,ctx,adjusted_score=score) for score,row,ctx in ranked[:top_n]]
+    def _shadow_hot_rows(self,rows,contexts,top_n):
+        row_by_ticker={row['ticker']:row for row in rows}
+        hot=[]
+        for ctx in contexts:
+            if not self._is_hot_context(ctx): continue
+            row=row_by_ticker.get(ctx.ticker.upper(),{'rank':999,'ticker':ctx.ticker.upper(),'final':0.0,'label':'','reason':''})
+            hot.append((ctx.intraday_score,-ctx.intraday_risk_score,row,ctx))
+        hot.sort(key=lambda x:(x[0],x[1]),reverse=True)
+        return [self._shadow_row(row,ctx) for _,_,row,ctx in hot[:top_n]]
+    def _shadow_row(self,row,ctx=None,adjusted_score=None):
+        out=dict(row)
+        if adjusted_score is not None:
+            out['adjusted_score']=round(float(adjusted_score),4)
+        if ctx is not None:
+            out.update({
+                'intraday_score': getattr(ctx,'intraday_score',None),
+                'intraday_risk_score': getattr(ctx,'intraday_risk_score',None),
+                'current_price': getattr(ctx,'current_price',None),
+                'current_vs_prev_close_pct': getattr(ctx,'current_vs_prev_close_pct',None),
+                'latest_10m_return_pct': getattr(ctx,'latest_10m_return_pct',None),
+                'latest_30m_return_pct': getattr(ctx,'latest_30m_return_pct',None),
+                'vwap_position_pct': getattr(ctx,'vwap_position_pct',None),
+                'above_vwap': getattr(ctx,'above_vwap',None),
+                'intraday_volume_ratio': getattr(ctx,'intraday_volume_ratio',None),
+            })
+        return out
+    def _write_shadow_csv(self,path,rows):
+        fieldnames=[]
+        for row in rows:
+            for key in row.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
+        if not fieldnames:
+            fieldnames=['ticker']
+        with open(path,'w',encoding='utf-8',newline='') as f:
+            writer=csv.DictWriter(f,fieldnames=fieldnames,extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(rows)
     def _run(self,cmd):
         env=os.environ.copy(); env['PYTHONUTF8']='1'; env['PYTHONIOENCODING']='utf-8'
         proc=subprocess.run(cmd,cwd=str(self.project_dir),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=self.timeout_sec,env=env,shell=False)

@@ -19,7 +19,7 @@ def compact_cli_output(text:str,max_chars:int=3300)->str:
 def header(title:str)->str:
     return f'🔥 Phoenix Quant\n{title}\n시간: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
 def help_message()->str:
-    return ('🔥 Phoenix Quant Bot\n\n명령어:\n/ping - 연결 확인\n/whoami - 내 chat_id 확인\n/top 10 - Daily 후보 50개 이상 + intraday 재정렬\n/hot 10 - 장중 관심 후보 필터\n/analyze NVDA - 상세 분석 + intraday context\n/intraday NVDA - 현재가/10m/30m/VWAP 빠른 확인\n/regime - SPY 시장 상태\n/status - 봇 설정\n/help - 도움말\n\n※ 매매 추천/자동매매가 아니라 참고용 분석 보조 도구입니다.')
+    return ('🔥 Phoenix Quant Bot\n\n명령어:\n/ping - 연결 확인\n/whoami - 내 chat_id 확인\n/top 10 - 일봉 기반 후보 + 별도 intraday overlay 참고 블록\n/toplive 10 - 실험: Daily 후보 50개 이상을 장중 adjusted_score로 재정렬\n/top live 10 - /toplive와 동일한 실험 명령\n/hot 10 - 장중 강세 조건 충족 후보 필터\n/analyze NVDA - 상세 분석 + intraday context\n/intraday NVDA - 현재가/10m/30m/VWAP 빠른 확인\n/regime - SPY 시장 상태\n/status - 봇 설정\n/help - 도움말\n\n라벨: 관심=우선 관찰, 관찰=추가 확인, 보류=조건 부족/매매 후보 해석 금지, 제외=제외 대상.\n※ 매매 추천/자동매매가 아니라 참고용 분석 보조 도구입니다.')
 def disclaimer()->str: return '※ 참고용 분석입니다. 매수/매도 추천이 아니며 최종 판단은 사용자가 직접 합니다.'
 
 
@@ -142,6 +142,7 @@ def format_status_message(**values) -> str:
         ('default_top_n', 'top_n'),
         ('top_candidate_pool_n', 'candidate_pool'),
         ('hot_min_score', 'hot_min_score'),
+        ('shadow_log_dir', 'shadow_log_dir'),
         ('intraday_enabled', 'intraday'),
         ('intraday_overlay', 'overlay'),
         ('intraday_overlay_rerank', 'rerank'),

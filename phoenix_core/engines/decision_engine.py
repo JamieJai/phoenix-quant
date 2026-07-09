@@ -12,6 +12,7 @@ def _clip100(x: float) -> float:
 
 
 def _label(score: float) -> str:
+    # 참고용 4단계 라벨입니다. 관심=우선 관찰, 관찰=추가 확인, 보류=매매 후보 해석 금지, 제외=제외 대상.
     if score >= 60:
         return "관심"
     if score >= 45:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -21,7 +23,7 @@ from phoenix_core.intraday_features import INTRADAY_FEATURE_NAMES, build_intrada
 from phoenix_core.intraday_feature_store import append_intraday_feature_rows, load_intraday_feature_cache
 from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
 from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_overlay
-from phoenix_core.services.telegram_message_formatter import compact_analysis_output, compact_ranking_output
+from phoenix_core.services.telegram_message_formatter import compact_analysis_output, compact_ranking_output, help_message
 from phoenix_core.models import (
     CorrelationInput,
     ContextEngineInput,
@@ -36,6 +38,8 @@ from phoenix_core.models import (
 from phoenix_core.pipeline import build_pattern_records, build_trade_plan
 from phoenix_core.registry import EngineRegistry
 from phoenix_core.trade import EntryMode, TradeConfig, TradeSimulationEngine
+from phoenix_core.services import telegram_command_bot as telegram_bot_module
+from phoenix_core.services.telegram_command_bot import PhoenixTelegramBot
 
 
 def make_synthetic_ohlcv(n=420, seed=0, drift=0.0004, vol=0.02, start_price=50.0):
@@ -425,6 +429,61 @@ Top Similar Cases:
     )
     overlay_no_data_text = format_intraday_overlay([no_data_ctx, strong_second], max_items=2, rerank=True)
     assert "NODATA" not in overlay_no_data_text and "STRG2" in overlay_no_data_text
+
+    class FakeIntradayEngine:
+        def analyze_many(self, tickers):
+            mapping = {"NVDA": replace(weak_first, ticker="NVDA"), "AMD": replace(strong_second, ticker="AMD")}
+            return [mapping[t] for t in tickers if t in mapping]
+
+    def make_bot(expected_top_n):
+        bot = PhoenixTelegramBot.__new__(PhoenixTelegramBot)
+        bot.default_top_n = 2
+        bot.top_candidate_pool_n = 50
+        bot.hot_min_score = 55
+        bot.refresh_on_top = False
+        bot.intraday_enabled = True
+        bot.overlay_enabled = True
+        bot.overlay_max = 2
+        bot.intraday_overlay_rerank = True
+        bot.intraday_feature_cache_enabled = False
+        bot.shadow_log_dir = Path(tempfile.mkdtemp())
+        bot.intraday_engine = FakeIntradayEngine()
+        bot.project_dir = Path(ROOT)
+        bot.python_exe = sys.executable
+        bot.timeout_sec = 30
+        def fake_run(cmd):
+            assert cmd[-1] == str(expected_top_n)
+            return xgb_ranking_text.replace("NVDA", "NVDA", 1)
+        bot._run = fake_run
+        return bot
+
+    old_chat_action = telegram_bot_module.send_chat_action_with_token
+    telegram_bot_module.send_chat_action_with_token = lambda *args, **kwargs: None
+    try:
+        fake_profile = type("FakeProfile", (), {"token": "token"})()
+        top_resp = make_bot(2)._cmd_top(["2"], "chat", fake_profile)
+        assert "Rank | Ticker | Final/XGB" in top_resp
+        assert top_resp.index("1. NVDA") < top_resp.index("2. AMD")
+        assert "📡 Intraday Overlay" in top_resp
+        assert "실험: Daily 후보 50" not in top_resp
+
+        toplive_resp = make_bot(50)._cmd_toplive(["2"], "chat", fake_profile)
+        assert "Experimental Intraday Rerank" in toplive_resp
+        assert "실험: Daily 후보 50" in toplive_resp
+        assert toplive_resp.index("AMD") < toplive_resp.index("NVDA")
+
+        hot_resp = make_bot(50)._cmd_hot(["2"], "chat", fake_profile)
+        assert "장중 관심 후보" in hot_resp
+        assert "AMD" in hot_resp and "NVDA" not in hot_resp
+    finally:
+        telegram_bot_module.send_chat_action_with_token = old_chat_action
+
+    assert "/top 10 - 일봉 기반 후보" in help_message()
+    assert "/toplive 10 - 실험" in help_message()
+    assert "/hot 10 - 장중 강세" in help_message()
+    assert "PHOENIX_TOP_INTRADAY_RERANK" not in Path(os.path.join(ROOT, "phoenix_core/services/telegram_command_bot.py")).read_text()
+    assert "PHOENIX_TOP_INTRADAY_RERANK" not in Path(os.path.join(ROOT, ".env.example")).read_text()
+    print("telegram top/toplive/hot separation ok")
     print("telegram compact formatter ok")
 
     trade_engine = TradeSimulationEngine(TradeConfig(max_hold_days=2, entry_mode=EntryMode.NEXT_OPEN, take_profit=9.0, stop_loss=9.0, fee_bps=0.0, slippage_bps=0.0))

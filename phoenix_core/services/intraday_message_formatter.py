@@ -57,7 +57,16 @@ def extract_candidate_tickers(text:str, limit:int=10)->list[str]:
     return found
 
 def filter_intraday_overlay_contexts(contexts: Iterable[IntradayContext]) -> list[IntradayContext]:
-    return [ctx for ctx in contexts if ctx.label not in NO_INTRADAY_DATA_LABELS and ctx.current_price is not None]
+    kept=[]
+    excluded=[]
+    for ctx in contexts:
+        if ctx.label in NO_INTRADAY_DATA_LABELS or ctx.current_price is None:
+            excluded.append(f'{ctx.ticker}:{ctx.label}')
+            continue
+        kept.append(ctx)
+    if excluded:
+        print(f'[intraday overlay] excluded_no_data count={len(excluded)} tickers={",".join(excluded)}')
+    return kept
 
 def _valid(t):
     return bool(t and t not in EXCLUDE_TOKENS and len(t)<=8 and re.search(r'[A-Z]',t))
