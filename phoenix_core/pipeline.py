@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import date
 from typing import Dict, Iterable, List
 
@@ -30,6 +31,24 @@ from .trade.trade_rules import normalize_config, stop_loss_price, take_profit_pr
 
 
 PHOENIX_QUANT_VERSION = "v2.1.1"
+
+
+def _write_report_file(path: str, content: str) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.",
+        suffix=".tmp",
+        dir=directory,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def build_pattern_records(raw_data: Dict[str, pd.DataFrame], feature_engine, feature_names: List[str] | None = None) -> List[PatternRecord]:
@@ -219,8 +238,7 @@ def analyze_ticker(config: AppConfig, ticker: str, period: str = "3y", refresh: 
         trade_plan=build_trade_plan(meta["latest_close"], config),
     )
     report_path = os.path.join(config.reports_dir, f"{ticker}_{decision.as_of}.txt")
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report)
+    _write_report_file(report_path, report)
     meta["report_path"] = report_path
     meta["decision"] = decision
     return report, meta
@@ -250,8 +268,7 @@ def rank_universe(config: AppConfig, period: str = "3y", refresh: bool = False,
     ))
     report = render_ranking_report(ranking)
     report_path = os.path.join(config.reports_dir, f"ranking_{ranking.as_of}.txt")
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report)
+    _write_report_file(report_path, report)
     return report, {"report_path": report_path, "ranking": ranking}
 
 def _unique_similar_cases(neighbors, max_cases: int = 5, per_ticker_limit: int = 2):
@@ -427,7 +444,7 @@ def render_ranking_report(ranking) -> str:
         "━━━━━━━━━━━━━━━━━━━━",
         f"기준일: {ranking.as_of}",
         "",
-        "Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label",
+        "Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label | Reason",
     ]
     for i, item in enumerate(ranking.items, start=1):
         lines.append(
@@ -435,7 +452,7 @@ def render_ranking_report(ranking) -> str:
             f"{item.suitability_score:>5.1f} | {item.confidence_score:>5.1f} | "
             f"{item.risk_score:>5.1f} | {item.market_score:>5.1f} | "
             f"${item.entry_price:>7.2f} | ${item.take_profit_price:>7.2f} | ${item.stop_loss_price:>7.2f} | "
-            f"{item.max_hold_days:>2}d | {item.hit_rate_5d*100:>5.0f}% | {item.label}"
+            f"{item.max_hold_days:>2}d | {item.hit_rate_5d*100:>5.0f}% | {item.label} | {item.label_reason}"
         )
     lines += ["", "※ Ranking은 같은 기준의 상대 비교용이며 투자 자문이 아닙니다."]
     return "\n".join(lines)

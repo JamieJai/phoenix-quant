@@ -20,7 +20,7 @@ from phoenix_core.labels import compute_forward_labels
 from phoenix_core.intraday_features import INTRADAY_FEATURE_NAMES, build_intraday_feature_dict
 from phoenix_core.intraday_feature_store import append_intraday_feature_rows, load_intraday_feature_cache
 from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
-from phoenix_core.services.intraday_message_formatter import format_intraday_overlay
+from phoenix_core.services.intraday_message_formatter import extract_candidate_tickers, format_intraday_overlay
 from phoenix_core.services.telegram_message_formatter import compact_analysis_output, compact_ranking_output
 from phoenix_core.models import (
     CorrelationInput,
@@ -340,6 +340,34 @@ Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry |
     compact_xgb_rank = compact_ranking_output(xgb_ranking_text, max_rows=2)
     assert "final" in compact_xgb_rank and "xgb" in compact_xgb_rank and "NVDA" in compact_xgb_rank
 
+    noisy_ranking_text = """Phoenix Quant v2.1.1 Ranking
+━━━━━━━━━━━━━━━━━━━━
+기준일: 2026-07-08
+
+Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry | TP | SL | Hold | 5D Hit | Label
+ 1 | PANW   |  45.7 |  57.0 |  40.9 |  90.9 |  59.9 |  54.6 | $ 320.59 | $ 336.62 | $ 310.97 |  5d |    56% | 비추천
+ 2 | PLTR   |  41.3 |  53.3 |  36.1 |  91.3 |  60.8 |  54.6 | $ 132.22 | $ 138.83 | $ 128.25 |  5d |    50% | 비추천
+ 3 | TSLA   |  39.1 |  56.7 |  31.6 |  89.3 |  61.8 |  54.6 | $ 394.06 | $ 413.76 | $ 382.24 |  5d |    50% | 비추천
+ 4 | MU     |  38.0 |  79.0 |  20.4 |  91.0 |  76.2 |  48.8 | $ 948.80 | $ 996.24 | $ 920.34 |  5d |    60% | 비추천
+ 5 | INTU   |  37.6 |  46.7 |  33.8 |  92.2 |  56.6 |  54.6 | $ 272.10 | $ 285.71 | $ 263.94 |  5d |    41% | 비추천
+ 6 | INTC   |  37.3 |  82.7 |  17.8 |  92.0 |  75.8 |  48.8 | $ 110.24 | $ 115.75 | $ 106.93 |  5d |    53% | 비추천
+ 7 | QCOM   |  36.8 |  62.7 |  25.7 |  92.2 |  68.3 |  50.8 | $ 186.56 | $ 195.89 | $ 180.96 |  5d |    59% | 비추천
+ 8 | CRWD   |  36.2 |  39.7 |  34.7 |  90.7 |  56.0 |  54.6 | $ 191.12 | $ 200.68 | $ 185.39 |  5d |    44% | 비추천
+ 9 | NFLX   |  31.6 |  36.3 |  29.5 |  91.8 |  56.3 |  54.6 | $  75.59 | $  79.37 | $  73.32 |  5d |    30% | 비추천
+10 | AMAT   |  31.5 |  67.7 |  16.0 |  91.0 |  76.2 |  48.8 | $ 570.50 | $ 599.02 | $ 553.38 |  5d |    47% | 비추천
+"""
+    extracted = extract_candidate_tickers(noisy_ranking_text, limit=20)
+    assert extracted == ["PANW", "PLTR", "TSLA", "MU", "INTU", "INTC", "QCOM", "CRWD", "NFLX", "AMAT"]
+    assert not {"XGB", "TP", "SL"}.intersection(extracted)
+
+    dotted_ranking_text = """1. PANW   final 45.7 XGB 57.0 TP 336.62 SL 310.97
+ 2. PLTR   final 41.3
+3 | TSLA | final 39.1
+Ticker: XGB
+"""
+    assert extract_candidate_tickers(dotted_ranking_text, limit=10) == ["PANW", "PLTR", "TSLA"]
+    print("intraday ticker extraction ok")
+
     analysis_text = """Phoenix Quant v1.2
 Ticker: NVDA
 기준일: 2024-01-02
@@ -370,6 +398,33 @@ Top Similar Cases:
 
     overlay_text = format_intraday_overlay([weak_first, strong_second], max_items=2, rerank=True)
     assert "장중 재정렬" in overlay_text and "STRG2" in overlay_text and "daily #2" in overlay_text
+    no_data_ctx = IntradayContext(
+        ticker="NODATA",
+        timestamp="2024-01-02T10:30:00",
+        source="synthetic",
+        current_price=None,
+        previous_close=None,
+        current_vs_prev_close_pct=None,
+        day_open=None,
+        intraday_return_pct=None,
+        latest_10m_return_pct=None,
+        latest_30m_return_pct=None,
+        today_volume=None,
+        avg_intraday_volume=None,
+        intraday_volume_ratio=None,
+        vwap=None,
+        vwap_position_pct=None,
+        above_vwap=None,
+        intraday_high=None,
+        pullback_from_intraday_high_pct=None,
+        intraday_score=0,
+        intraday_risk_score=100,
+        label="NO_DATA",
+        notes=[],
+        features={},
+    )
+    overlay_no_data_text = format_intraday_overlay([no_data_ctx, strong_second], max_items=2, rerank=True)
+    assert "NODATA" not in overlay_no_data_text and "STRG2" in overlay_no_data_text
     print("telegram compact formatter ok")
 
     trade_engine = TradeSimulationEngine(TradeConfig(max_hold_days=2, entry_mode=EntryMode.NEXT_OPEN, take_profit=9.0, stop_loss=9.0, fee_bps=0.0, slippage_bps=0.0))

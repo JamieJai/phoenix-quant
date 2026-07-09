@@ -12,13 +12,13 @@ def _clip100(x: float) -> float:
 
 
 def _label(score: float) -> str:
-    if score >= 75:
-        return "강함"
     if score >= 60:
         return "관심"
     if score >= 45:
-        return "중립/관망"
-    return "비추천"
+        return "관찰"
+    if score >= 30:
+        return "보류"
+    return "제외"
 
 
 @EngineRegistry.register("decision_engine", "weighted_v1")

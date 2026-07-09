@@ -70,6 +70,34 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
             return float(model.predict_proba(x)[0, 1])
         return float(model.predict(x)[0])
 
+    def _label_reason(self, decision, xgb_score: float, final_rank_score: float) -> str:
+        reasons = []
+        if np.isfinite(xgb_score):
+            if xgb_score >= 0.65:
+                reasons.append("XGB 높음")
+            elif xgb_score < 0.45:
+                reasons.append("XGB 낮음")
+        if decision.risk_score >= 70:
+            reasons.append("risk 과다")
+        elif decision.risk_score <= 45:
+            reasons.append("risk 양호")
+        if decision.confidence_score >= 85:
+            reasons.append("conf 높음")
+        elif decision.confidence_score < 60:
+            reasons.append("conf 낮음")
+        market_score = float(decision.sub_scores.get("market_score", 0.0))
+        if market_score >= 60:
+            reasons.append("market 양호")
+        elif market_score < 45:
+            reasons.append("market 약함")
+        if decision.success_rate_5d >= 0.55:
+            reasons.append("5D hit 양호")
+        elif decision.success_rate_5d < 0.40:
+            reasons.append("5D hit 낮음")
+        if final_rank_score < 35:
+            reasons.append("final 낮음")
+        return " / ".join(reasons[:5]) if reasons else "중립"
+
     def run(self, input_data: RankingInput) -> RankingResult:
         items: list[RankingItem] = []
         xgb_model = None
@@ -115,6 +143,7 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     max_hold_days=int(trade_plan["max_hold_days"]),
                     xgb_score=0.0 if not np.isfinite(xgb_score) else xgb_score,
                     final_rank_score=final_rank_score,
+                    label_reason=self._label_reason(decision, xgb_score, final_rank_score),
                 ))
             except Exception as exc:  # noqa: BLE001
                 if input_data.verbose:

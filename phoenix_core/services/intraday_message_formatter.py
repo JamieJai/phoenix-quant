@@ -4,7 +4,13 @@ from typing import Iterable
 from phoenix_core.engines.intraday_context_engine import IntradayContext
 from phoenix_core.intraday_overlay_ranker import rank_intraday_overlay_contexts
 
-EXCLUDE_TOKENS={'TOP','ETF','USD','KST','UTC','AI','API','CSV','HTML','INFO','WARN','ERROR','PHOENIX','QUANT','BUY','SELL','HOLD','NONE','RISK','SCORE'}
+EXCLUDE_TOKENS={
+    'TOP','ETF','USD','KST','UTC','AI','API','CSV','HTML','INFO','WARN','ERROR',
+    'PHOENIX','QUANT','BUY','SELL','HOLD','NONE','RISK','SCORE','XGB','TP','SL',
+    'VWAP','FINAL','CONF','LABEL','RANK',
+}
+NO_INTRADAY_DATA_LABELS={'NO_DATA','DATA_ERROR','ERROR'}
+RANKING_ROW_TICKER_RE=re.compile(r'(?im)^\s*\d+\s*(?:[.]\s+|\|\s*)([A-Z][A-Z0-9\.\-]{0,7})\b')
 
 def _money(x): return '-' if x is None else f'${x:,.2f}'
 def _pct(x): return '-' if x is None else f'{x:+.2f}%'
@@ -29,7 +35,7 @@ def format_intraday_context(ctx: IntradayContext) -> str:
 
 def format_intraday_overlay(contexts: Iterable[IntradayContext], max_items:int=5, rerank:bool=True) -> str:
     rows=[]
-    contexts_list=list(contexts)
+    contexts_list=filter_intraday_overlay_contexts(contexts)
     if rerank:
         ranked=rank_intraday_overlay_contexts(contexts_list,max_items=max_items)
         for i,item in enumerate(ranked,1):
@@ -43,19 +49,15 @@ def format_intraday_overlay(contexts: Iterable[IntradayContext], max_items:int=5
 
 def extract_candidate_tickers(text:str, limit:int=10)->list[str]:
     found=[]
-    patterns=[r'(?im)^\s*#?\s*\d+\s*[\.)]?\s+([A-Z][A-Z0-9\.\-]{0,7})\b', r'(?im)\bticker\s*[:=]\s*([A-Z][A-Z0-9\.\-]{0,7})\b', r'(?im)\b티커\s*[:=]\s*([A-Z][A-Z0-9\.\-]{0,7})\b']
-    for pat in patterns:
-        for m in re.finditer(pat,text or ''):
-            t=m.group(1).upper()
-            if _valid(t) and t not in found:
-                found.append(t)
-                if len(found)>=limit: return found
-    for m in re.finditer(r'\b[A-Z][A-Z0-9\.\-]{1,7}\b', text or ''):
-        t=m.group(0).upper()
+    for m in RANKING_ROW_TICKER_RE.finditer(text or ''):
+        t=m.group(1).upper()
         if _valid(t) and t not in found:
             found.append(t)
             if len(found)>=limit: return found
     return found
+
+def filter_intraday_overlay_contexts(contexts: Iterable[IntradayContext]) -> list[IntradayContext]:
+    return [ctx for ctx in contexts if ctx.label not in NO_INTRADAY_DATA_LABELS and ctx.current_price is not None]
 
 def _valid(t):
     return bool(t and t not in EXCLUDE_TOKENS and len(t)<=8 and re.search(r'[A-Z]',t))

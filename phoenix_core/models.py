@@ -109,6 +109,7 @@ class RankingItem:
     max_hold_days: int = 0
     xgb_score: float = 0.0
     final_rank_score: float = 0.0
+    label_reason: str = ""
 
 
 @dataclass
