@@ -42,12 +42,18 @@ def score_intraday_overlay_context(ctx: Any, original_rank: int) -> IntradayOver
     relative_volume = _feature(ctx, "relative_intraday_volume")
     pullback = _feature(ctx, "pullback_from_intraday_high_pct")
     gap = _feature(ctx, "gap_prev_close_pct")
+    confidence = _feature(ctx, "data_confidence_score", 50.0)
+    acceleration = _feature(ctx, "momentum_acceleration_pct")
+    sector_rs = sum(_feature(ctx, name) for name in ("sector_rs_soxx_pct", "sector_rs_smh_pct", "sector_rs_qqq_pct")) / 3.0
 
     vwap_adjust = _clip(vwap_position * 2.0, -6.0, 6.0)
     volume_adjust = _clip((relative_volume - 1.0) * 4.0, 0.0, 8.0) if relative_volume > 1.0 else 0.0
     pullback_adjust = _clip((pullback + 1.0) * 1.5, -8.0, 3.0)
     chase_penalty = -8.0 if gap >= 8.0 else (-4.0 if gap >= 5.0 else 0.0)
-    microstructure_adjustment = vwap_adjust + volume_adjust + pullback_adjust + chase_penalty
+    momentum_adjust = _clip(acceleration * 1.5, -5.0, 5.0)
+    sector_adjust = _clip(sector_rs * 0.5, -5.0, 5.0)
+    confidence_adjust = _clip((confidence - 70.0) * 0.05, -3.5, 1.5)
+    microstructure_adjustment = vwap_adjust + volume_adjust + pullback_adjust + chase_penalty + momentum_adjust + sector_adjust + confidence_adjust
 
     intraday_component = 0.45 * intraday_score
     risk_penalty = 0.20 * risk_score

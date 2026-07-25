@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Any
 
@@ -18,7 +18,8 @@ BASE_INTRADAY_CACHE_COLUMNS = [
     "current_price",
     "previous_close",
 ]
-INTRADAY_CACHE_COLUMNS = BASE_INTRADAY_CACHE_COLUMNS + INTRADAY_FEATURE_NAMES
+INTRADAY_LABEL_COLUMNS = ["overlay_score", "forward_return_5m", "forward_return_10m", "outcome_5m", "outcome_10m"]
+INTRADAY_CACHE_COLUMNS = BASE_INTRADAY_CACHE_COLUMNS + INTRADAY_LABEL_COLUMNS + INTRADAY_FEATURE_NAMES
 
 
 def default_intraday_feature_cache_path(cache_dir: str = "data") -> str:
@@ -28,7 +29,7 @@ def default_intraday_feature_cache_path(cache_dir: str = "data") -> str:
 def intraday_context_to_feature_row(ctx: Any, recorded_at: str | None = None) -> dict[str, object]:
     features = getattr(ctx, "features", {}) or {}
     row: dict[str, object] = {
-        "recorded_at": recorded_at or datetime.now().isoformat(timespec="seconds"),
+        "recorded_at": recorded_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "ticker": str(getattr(ctx, "ticker", "")).upper(),
         "timestamp": getattr(ctx, "timestamp", ""),
         "source": getattr(ctx, "source", ""),
@@ -38,6 +39,13 @@ def intraday_context_to_feature_row(ctx: Any, recorded_at: str | None = None) ->
     }
     for name in INTRADAY_FEATURE_NAMES:
         row[name] = features.get(name)
+    try:
+        from .intraday_overlay_ranker import score_intraday_overlay_context
+        row["overlay_score"] = score_intraday_overlay_context(ctx, 1).adjusted_score
+    except Exception:
+        row["overlay_score"] = pd.NA
+    for name in INTRADAY_LABEL_COLUMNS[1:]:
+        row[name] = pd.NA
     return row
 
 

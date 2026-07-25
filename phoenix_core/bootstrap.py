@@ -10,6 +10,7 @@ def init() -> None:
     from . import default_features  # noqa: F401
     from .engines import backtest_engine  # noqa: F401
     from .engines import context_engine  # noqa: F401
+    from .engines import cross_market_context_engine  # noqa: F401
     from .engines import decision_engine  # noqa: F401
     from .engines import experiment_engine  # noqa: F401
     from .engines import explain_engine  # noqa: F401

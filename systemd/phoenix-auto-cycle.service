@@ -9,3 +9,5 @@ WorkingDirectory=/home/sysadmin/phoenix_ai_core_mvp
 EnvironmentFile=-/home/sysadmin/phoenix_ai_core_mvp/config/phoenix_auto_cycle.env
 ExecStart=/home/sysadmin/phoenix_ai_core_mvp/scripts/phoenix_auto_cycle.sh
 Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

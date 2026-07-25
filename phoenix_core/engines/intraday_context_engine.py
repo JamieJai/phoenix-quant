@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any
 import math, warnings
 import pandas as pd
@@ -32,6 +32,12 @@ class IntradayContext:
     label: str
     notes: list[str]
     features: dict[str, float] = field(default_factory=dict)
+    data_confidence_score: float = 0.0
+    sector_rs_soxx_pct: Optional[float] = None
+    sector_rs_smh_pct: Optional[float] = None
+    sector_rs_qqq_pct: Optional[float] = None
+    momentum_acceleration_pct: Optional[float] = None
+    chase_penalty_score: float = 0.0
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -86,6 +92,7 @@ class IntradayContextEngine:
                 df10=_flat(yf.download(ticker,period=self.intraday_period,interval=self.interval_10m,prepost=self.include_prepost,auto_adjust=False,progress=False,threads=False))
                 df30=_flat(yf.download(ticker,period=self.intraday_period,interval=self.interval_30m,prepost=self.include_prepost,auto_adjust=False,progress=False,threads=False))
                 dfd=_flat(yf.download(ticker,period='10d',interval='1d',prepost=self.include_prepost,auto_adjust=False,progress=False,threads=False))
+                sector_frames={s: _flat(yf.download(s, period=self.intraday_period, interval=self.interval_10m, prepost=self.include_prepost, auto_adjust=False, progress=False, threads=False)) for s in ('SOXX', 'SMH', 'QQQ')}
         except Exception as e:
             return self._err(ticker,'DATA_ERROR',[f'yfinance download 실패: {type(e).__name__}: {e}'])
         if df10.empty and df30.empty and dfd.empty:
@@ -96,12 +103,20 @@ class IntradayContextEngine:
         day10=self._latest_session(df10); day30=self._latest_session(df30)
         day_open=self._first(day10,'Open') or self._first(day30,'Open')
         intraday_ret=_pct(cur,day_open)
-        r10=self._lookback(df10,3); r30=self._lookback(df30,2)
+        r10=self._lookback(df10,1); r30=self._lookback(df10,3)
+        if r30 is None: r30=self._lookback(df30,1)
         today_vol,avg_vol,vol_ratio=self._volume(df10)
         vwap=self._vwap(day10); vwap_pos=_pct(cur,vwap); above=None if vwap_pos is None else vwap_pos>0
         high=self._max(day10,'High') or self._max(day30,'High')
         pull=_pct(cur,high)
+        acceleration = None if r10 is None or r30 is None else r10 - (r30 / 3.0)
+        confidence = max(0.0, min(100.0, 100.0 - 20.0 * sum(value is None for value in (cur, prev, r10, r30, vol_ratio, vwap_pos))))
+        chase_penalty = self._chase_penalty(cur, vwap, dfd)
+        rs_soxx = self._relative_strength(r10, sector_frames.get("SOXX"))
+        rs_smh = self._relative_strength(r10, sector_frames.get("SMH"))
+        rs_qqq = self._relative_strength(r10, sector_frames.get("QQQ"))
         score,risk,label,score_notes=self._score(gap,intraday_ret,r10,r30,vol_ratio,vwap_pos,pull)
+        risk = min(100, risk + int(max(0.0, chase_penalty)))
         notes+=score_notes
         if self.include_prepost: notes.append('prepost=True 기준입니다. 무료 데이터는 지연/누락될 수 있습니다.')
         features=build_intraday_feature_dict(
@@ -114,10 +129,27 @@ class IntradayContextEngine:
             pullback_from_intraday_high_pct=pull,
             intraday_score=float(score),
             intraday_risk_score=float(risk),
+            data_confidence_score=confidence,
+            sector_rs_soxx_pct=rs_soxx, sector_rs_smh_pct=rs_smh, sector_rs_qqq_pct=rs_qqq,
+            momentum_acceleration_pct=acceleration,
+            chase_penalty_score=chase_penalty,
         )
-        return IntradayContext(ticker,datetime.now().isoformat(timespec='seconds'),'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes,features)
+        return IntradayContext(ticker,datetime.now(timezone.utc).isoformat(timespec='seconds'),'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes,features)
+    def _relative_strength(self, ticker_return, benchmark_df):
+        benchmark_return = self._lookback(benchmark_df, 1)
+        if ticker_return is None or benchmark_return is None: return None
+        return ticker_return - benchmark_return
+    def _chase_penalty(self, cur, vwap, daily):
+        if cur is None or vwap in (None, 0): return 0.0
+        distance = abs(cur / vwap - 1.0) * 100.0
+        if daily is None or daily.empty or not {"High", "Low", "Close"}.issubset(daily.columns):
+            return min(8.0, max(0.0, distance - 2.0) * 1.5)
+        d = daily.dropna(subset=["High", "Low", "Close"]).tail(14)
+        if len(d) < 5: return min(8.0, max(0.0, distance - 2.0) * 1.5)
+        atr_pct = float(((d["High"] - d["Low"]) / d["Close"]).mean() * 100.0)
+        return min(12.0, max(0.0, distance - max(2.0, atr_pct)) * 1.5)
     def _err(self,ticker,label,notes):
-        return IntradayContext(ticker,datetime.now().isoformat(timespec='seconds'),'yfinance',None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,0,100,label,notes)
+        return IntradayContext(ticker,datetime.now(timezone.utc).isoformat(timespec='seconds'),'yfinance',None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,0,100,label,notes)
     def _previous_close(self,df):
         if df is None or df.empty or 'Close' not in df.columns: return None
         s=pd.to_numeric(df['Close'],errors='coerce').dropna()

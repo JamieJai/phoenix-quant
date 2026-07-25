@@ -68,6 +68,24 @@ class SectorRotationResult:
 
 
 @dataclass
+class CrossMarketContextInput:
+    as_of: date
+    market_ohlcv: Optional[Dict[str, Any]] = None
+    ticker: str = ""
+    ohlcv: Optional[Dict[str, Any]] = None
+    sector_symbol: str = "SMH"
+
+
+@dataclass
+class CrossMarketContextResult:
+    as_of: date
+    features: Dict[str, float] = field(default_factory=dict)
+    research_only: bool = True
+    is_calibrated: bool = False
+    model_version: str = "cross_market_v1"
+
+
+@dataclass
 class CorrelationInput:
     ticker: str
     as_of: date

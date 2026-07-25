@@ -1,0 +1,79 @@
+# Intraday Quant Strategy Engine staged rollout plan.
+# Research configuration only: this file is not read by production scoring yet.
+
+status: research_only
+production_overlay_enabled: false
+
+score_weights:
+  opportunity:
+    market: 0.15
+    sector: 0.15
+    momentum: 0.20
+    relative_strength: 0.15
+    volume_vwap: 0.15
+    entry_location: 0.15
+    catalyst: 0.05
+  confidence:
+    data_completeness: 0.25
+    liquidity: 0.20
+    signal_agreement: 0.30
+    regime_stability: 0.15
+    freshness: 0.10
+  risk:
+    volatility: 0.20
+    event: 0.20
+    chase: 0.20
+    liquidity: 0.10
+    market_breakdown: 0.15
+    downside_gap: 0.15
+
+states:
+  - MOMENTUM_LONG
+  - PULLBACK_LONG
+  - BREAKOUT_READY
+  - OVEREXTENDED_CHASE
+  - OVERSOLD_REVERSAL
+  - FAILED_GAP
+  - DISTRIBUTION
+  - NO_TRADE
+
+gates:
+  minimum_confidence: 50
+  maximum_chase_penalty: 20
+  minimum_rr_ratio: 1.2
+  require_point_in_time_features: true
+  require_freshness_and_coverage: true
+  require_frozen_base_ablation: true
+  require_rolling_oos: true
+  promotion_requires_manual_approval: true
+
+phases:
+  - id: 1
+    name: bounded_features
+    status: active_research
+    production_change: false
+  - id: 2
+    name: entry_and_risk_context
+    status: planned
+    production_change: false
+  - id: 3
+    name: event_and_flow_context
+    status: planned
+    production_change: false
+  - id: 4
+    name: labeled_oos_learning
+    status: planned
+    production_change: false
+
+validation:
+  baseline: frozen_base_only
+  comparison: identical_oos_windows
+  embargo_required: true
+  record_metrics:
+    - sample_size
+    - active_trades
+    - cash_weight
+    - mdd
+    - alpha
+    - p_value
+    - calibration

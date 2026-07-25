@@ -1,0 +1,4 @@
+interface:
+  display_name: "Phoenix Quant Research"
+  short_description: "Audit Phoenix data, models, and quant hypotheses"
+  default_prompt: "Use $phoenix-quant-research to audit Phoenix and propose the next validated experiment."
