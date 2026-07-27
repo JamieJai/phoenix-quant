@@ -8,7 +8,7 @@ import math
 import os
 import sys
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -307,7 +307,8 @@ def main() -> int:
                     min_coverage=args.min_split_coverage,
                 ))
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now_utc = datetime.now(timezone.utc)
+    stamp = now_utc.strftime("%Y%m%d_%H%M%S")
     output_dir = Path(args.output_dir or Path("reports") / "data_coverage" / stamp)
     ticker_csv = output_dir / "ticker_coverage.csv"
     split_csv = output_dir / "split_coverage.csv"
@@ -352,7 +353,7 @@ def main() -> int:
                 f"{item['usable_ratio']:.6f}<{args.min_universe_usable_ratio:.6f}"
             )
     summary = {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_utc.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "cache_dir": cache_dir,
         "ticker_count": len(ticker_rows),
         "missing_csv_count": missing_count,

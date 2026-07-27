@@ -1,0 +1,12 @@
+[Unit]
+Description=Python Stock weekly model training and Phoenix challenger governance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/sysadmin/phoenix_ai_core_mvp
+ExecStart=/home/sysadmin/phoenix_ai_core_mvp/scripts/phoenix_weekly_governance.sh
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

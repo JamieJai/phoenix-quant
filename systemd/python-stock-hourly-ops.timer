@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Python Stock operational cycle hourly as sysadmin
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=python-stock-hourly-ops.service
+
+[Install]
+WantedBy=timers.target

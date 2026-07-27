@@ -8,10 +8,20 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
+PAUSE_FILE="${PHOENIX_PAUSE_FILE:-$ROOT_DIR/.phoenix_auto_cycle.pause}"
+if [[ "${PHOENIX_AUTO_CYCLE_DISABLED:-0}" == "1" || -f "$PAUSE_FILE" ]]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] auto cycle disabled or pause file exists; exiting"
+  exit 0
+fi
+
 LOG_DIR="${PHOENIX_LOG_DIR:-$ROOT_DIR/logs}"
 LOG_FILE="${PHOENIX_LOG_FILE:-$LOG_DIR/phoenix_auto_validation.log}"
-LOCK_FILE="${PHOENIX_LOCK_FILE:-/tmp/phoenix_auto_cycle.lock}"
-mkdir -p "$LOG_DIR"
+LOCK_FILE="${PHOENIX_LOCK_FILE:-/home/sysadmin/python-stock/run/locks/phoenix-weekly-auto-cycle.lock}"
+if [[ ( -e "$LOG_FILE" && ! -w "$LOG_FILE" ) || ( ! -e "$LOG_FILE" && ! -w "$LOG_DIR" ) ]]; then
+  LOG_DIR="$ROOT_DIR/reports/runtime_logs"
+  LOG_FILE="$LOG_DIR/phoenix_auto_validation.log"
+fi
+mkdir -p "$LOG_DIR" "$(dirname "$LOCK_FILE")"
 exec >>"$LOG_FILE" 2>&1
 
 echo
@@ -171,9 +181,13 @@ GATE_STATUS=$?
 set -e
 
 if [[ "$GATE_STATUS" -eq 0 ]]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] promotion succeeded; restarting $BOT_SERVICE"
-  systemctl restart "$BOT_SERVICE"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] $BOT_SERVICE restarted"
+  if [[ "${PHOENIX_RESTART_BOT_ON_PROMOTION:-1}" == "1" ]]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] promotion succeeded; restarting $BOT_SERVICE"
+    systemctl restart "$BOT_SERVICE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] $BOT_SERVICE restarted"
+  else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] research promotion succeeded; live bot restart disabled"
+  fi
 elif [[ "$GATE_STATUS" -eq 2 ]]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] promotion rejected; bot restart skipped"
 else

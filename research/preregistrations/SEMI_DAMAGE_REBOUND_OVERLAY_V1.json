@@ -1,0 +1,74 @@
+{
+  "hypothesis_id": "SEMI_DAMAGE_REBOUND_OVERLAY_V1",
+  "status": "PREREGISTERED_FORWARD_ONLY",
+  "preregistered_at_utc": "2026-07-27T11:34:22Z",
+  "research_only": true,
+  "runtime_enabled": false,
+  "direct_llm_signal": false,
+  "economic_hypothesis": "When the semiconductor sector's 20-session trend is materially more damaged than QQQ while SMH and SOXX have a positive five-session rebound, the rebound may be fragile rather than a confirmed medium-term recovery.",
+  "formula": {
+    "return_units": "decimal",
+    "semi_20d": "(SMH_20d + SOXX_20d) / 2",
+    "damage": "clip((QQQ_20d - semi_20d) / 0.10, 0, 1)",
+    "rebound": "1 if (SMH_5d + SOXX_5d) / 2 > 0 else 0",
+    "penalty_points": "-5 * damage * rebound",
+    "frozen_constants": {
+      "maximum_penalty_points": -5.0,
+      "damage_scale_decimal": 0.10,
+      "short_window_sessions": 5,
+      "medium_window_sessions": 20
+    }
+  },
+  "point_in_time": {
+    "source_symbols": [
+      "QQQ",
+      "SMH",
+      "SOXX"
+    ],
+    "availability": "Only after all three US regular-session closes are final.",
+    "application": "NEXT_SESSION_ONLY",
+    "same_session_retroactive_application": false,
+    "missing_policy": {
+      "penalty_points": 0.0,
+      "confidence_downgrade_points": -10.0,
+      "imputation": "none"
+    }
+  },
+  "data_classification": {
+    "through_session": "2026-07-24",
+    "classification": "HYPOTHESIS_GENERATION_DATA",
+    "confirmatory_reuse_allowed": false
+  },
+  "forward_test": {
+    "first_eligible_feature_close_utc": "2026-07-27T20:00:00Z",
+    "first_eligible_prediction_session": "2026-07-28",
+    "baseline": "FROZEN_CHAMPION_20260714_000251",
+    "challenger": "FROZEN_CHAMPION_20260714_000251_PLUS_SEMI_DAMAGE_REBOUND_OVERLAY_V1",
+    "identical_components": [
+      "candidate_universe",
+      "execution",
+      "cost",
+      "holding_period",
+      "all_other_scores",
+      "data_snapshot"
+    ],
+    "evaluation": "prospective forward sessions only; rolling OOS assessment begins only after enough unseen sessions exist"
+  },
+  "acceptance_gate": {
+    "mdd_improvement_min_percentage_points": 1.0,
+    "alpha_degradation_max_percentage_points": 0.05,
+    "active_trades_min": 150,
+    "cash_weight_max": 0.55,
+    "rolling_oos_required": "2/2",
+    "concentration_check": "Improvement must not be attributable to only one or two trading dates.",
+    "threshold_retuning_allowed": false,
+    "failure_state": "SEMI_OVERLAY_REJECTED"
+  },
+  "safety": {
+    "champion_change_allowed": false,
+    "production_score_wiring_allowed": false,
+    "telegram_change_allowed": false,
+    "broker_route_allowed": false
+  }
+}
+

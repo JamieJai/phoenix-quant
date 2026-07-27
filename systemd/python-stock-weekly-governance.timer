@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Python Stock weekly model governance on Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 02:00:00 Asia/Seoul
+Persistent=false
+RandomizedDelaySec=5m
+Unit=python-stock-weekly-governance.service
+
+[Install]
+WantedBy=timers.target

@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +104,7 @@ def _build_status(args: argparse.Namespace) -> dict[str, Any]:
     current_payload = _load_json(models_root / "current" / "metrics.json")
     candidates = [_candidate_summary(path) for path in _candidate_dirs(models_root / "candidates", args.limit)]
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "models_root": str(models_root),
         "current": current_payload,
         "candidates": candidates,

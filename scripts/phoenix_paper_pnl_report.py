@@ -15,7 +15,7 @@ from scripts.phoenix_paper_signal_runner import _dt, _float
 from phoenix_core.trade.paper_engine import PaperEngineConfig, PaperSignal, PaperTradingEngine, OrderSide
 
 
-def run(path: str = "data/intraday_features.csv", *, fee_bps: float = 1.5,
+def run(path: str = "data/intraday_features.csv", *, fee_bps: float = 2.0,
         slippage_bps: float = 5.0, min_confidence: float = 50.0,
         min_rr: float = 1.2, max_age: int = 300, limit: int = 0) -> dict:
     cfg = PaperEngineConfig(fee_bps=fee_bps, slippage_bps=slippage_bps,
@@ -74,7 +74,7 @@ def run(path: str = "data/intraday_features.csv", *, fee_bps: float = 1.5,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--path", default="data/intraday_features.csv"); ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--fee-bps", type=float, default=1.5); ap.add_argument("--slippage-bps", type=float, default=5.0)
+    ap.add_argument("--fee-bps", type=float, default=2.0); ap.add_argument("--slippage-bps", type=float, default=5.0)
     ap.add_argument("--json", action="store_true"); args = ap.parse_args()
     out = run(args.path, fee_bps=args.fee_bps, slippage_bps=args.slippage_bps, limit=args.limit)
     print(json.dumps(out, ensure_ascii=False) if args.json else f"{out['status']} accepted={out['accepted']} 5m={out['5m']['mature']}")
