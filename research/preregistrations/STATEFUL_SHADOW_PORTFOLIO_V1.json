@@ -1,0 +1,81 @@
+{
+  "hypothesis_id": "STATEFUL_SHADOW_PORTFOLIO_V1",
+  "status": "FROZEN_PROSPECTIVE_EXECUTION_CONTRACT",
+  "scope": "RESEARCH_ONLY_BROKER_FREE_SHADOW_EXECUTION",
+  "frozen_at_utc": "2026-07-29T02:24:00Z",
+  "prospective_market_date_start": "2026-07-29",
+  "economic_purpose": "Measure whether accepted paper signals remain executable after quote freshness, portfolio capacity, costs, stops, targets, and restart-safe state are applied.",
+  "signal_contract": {
+    "source": "data/intraday_features.csv prospective rows",
+    "source_required": "yfinance",
+    "signal_known_at": "recorded_at",
+    "underlying_context_available_at": "timestamp",
+    "maximum_context_age_seconds": 1800,
+    "maximum_signal_processing_delay_seconds": 600,
+    "minimum_confidence": 70,
+    "maximum_risk_score": 55,
+    "duplicate_key": "SHA256(ticker, recorded_at, timestamp, source)"
+  },
+  "execution_quote_contract": {
+    "source": "YFINANCE_1M",
+    "raw_timestamp": "bar_start",
+    "available_at": "bar_start + 1 minute",
+    "maximum_quote_age_seconds": 30,
+    "future_quote_allowed": false,
+    "source_mixing_allowed": false,
+    "entry_execution": "latest completed eligible one-minute close plus adverse buy slippage"
+  },
+  "position_contract": {
+    "direction": "LONG_ONLY",
+    "stop_distance_fraction": 0.01,
+    "target_distance_fraction": 0.02,
+    "risk_reward_ratio": 2.0,
+    "maximum_hold_minutes": 30,
+    "same_bar_stop_and_target_rule": "STOP_FIRST",
+    "gap_stop_rule": "worse of bar open and stop trigger",
+    "target_price_improvement": false
+  },
+  "sizing_and_limits": {
+    "equity": 100000,
+    "risk_per_trade_fraction": 0.005,
+    "maximum_notional_per_position_fraction": 0.2,
+    "maximum_open_positions": 3,
+    "maximum_open_positions_per_ticker": 1,
+    "maximum_gross_exposure_fraction": 0.6,
+    "maximum_daily_orders": 20,
+    "maximum_daily_loss_fraction": 0.015,
+    "stop_after_consecutive_losses": 3
+  },
+  "costs": {
+    "commission_bps_each_side": 2.0,
+    "slippage_bps_each_side": 5.0
+  },
+  "persistence": {
+    "format": "SQLITE",
+    "transactions": "IMMEDIATE",
+    "restart_recovery_required": true,
+    "idempotent_signal_required": true,
+    "immutable_event_log_required": true
+  },
+  "interpretation": {
+    "historical_rows": "NOT_IMPORTED",
+    "shadow_results": "EXECUTION_EVIDENCE_NOT_ALPHA_PROOF",
+    "automatic_live_promotion": false
+  },
+  "prospective_acceptance": {
+    "minimum_closed_positions": 250,
+    "minimum_observed_days": 40,
+    "mean_net_return_greater_than": 0,
+    "maximum_drawdown_fraction": 0.1,
+    "maximum_execution_quote_rejection_rate": 0.2,
+    "threshold_retuning_after_results": false
+  },
+  "safety": {
+    "champion_changed": false,
+    "production_score_changed": false,
+    "paper_signal_changed": false,
+    "broker_or_account_api_allowed": false,
+    "live_orders_allowed": false,
+    "manual_approval_required": true
+  }
+}

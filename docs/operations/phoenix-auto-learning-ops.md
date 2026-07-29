@@ -208,6 +208,36 @@ Current conservative defaults:
 - Rolling OOS can be required for stricter promotion.
 - Telegram bot restarts only after successful promotion.
 
+## Stateful Shadow Portfolio
+
+`phoenix-shadow-portfolio.timer` advances a research-only SQLite portfolio
+every ten minutes during the U.S. session. It never imports a broker or
+account client and cannot place live orders.
+
+The worker consumes only prospective `yfinance` rows dated on or after
+2026-07-29. Entry quotes and exit bars both use completed `YFINANCE_1M`
+bars. A signal is permanently idempotent by its ticker, recorded timestamp,
+context timestamp, and source.
+
+Operational checks:
+
+```bash
+systemctl --user status phoenix-shadow-portfolio.timer
+.venv/bin/python scripts/phoenix_shadow_portfolio_status.py --json
+.venv/bin/python scripts/phoenix_shadow_ledger_validation.py --json
+```
+
+State is stored at:
+
+```text
+data/research/paper_shadow_portfolio/shadow_portfolio_v1.sqlite3
+```
+
+The database is a runtime research artifact. Do not copy it into model
+features or use it to retrain the Champion. Live review remains blocked until
+the frozen sample, duration, net-return, drawdown, quote-rejection, calibration,
+regime, and manual-approval gates all pass.
+
 ## Next Improvement Loop
 
 1. Collect feedback for recent Telegram `/top` candidates.

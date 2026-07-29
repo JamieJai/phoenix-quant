@@ -72,6 +72,16 @@ def main() -> int:
             "scripts/phoenix_portfolio_risk_validation.py",
             "--json",
         ],
+        "shadow_ledger_validation": [
+            PYTHON,
+            "scripts/phoenix_shadow_ledger_validation.py",
+            "--json",
+        ],
+        "shadow_portfolio_status": [
+            PYTHON,
+            "scripts/phoenix_shadow_portfolio_status.py",
+            "--json",
+        ],
         "live_readiness": [
             PYTHON,
             "scripts/phoenix_live_readiness.py",

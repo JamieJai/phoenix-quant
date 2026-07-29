@@ -1,0 +1,12 @@
+[Unit]
+Description=Advance Phoenix shadow portfolio every ten minutes in US session
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08..15:02/10:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 16:02:00 America/New_York
+AccuracySec=20s
+RandomizedDelaySec=15s
+Unit=phoenix-shadow-portfolio.service
+
+[Install]
+WantedBy=timers.target

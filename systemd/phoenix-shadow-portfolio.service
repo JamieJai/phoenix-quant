@@ -1,0 +1,11 @@
+[Unit]
+Description=Advance Phoenix broker-free stateful shadow portfolio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/sysadmin/phoenix_ai_core_mvp
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/sysadmin/phoenix_ai_core_mvp/.venv/bin/python /home/sysadmin/phoenix_ai_core_mvp/scripts/phoenix_shadow_portfolio_worker.py

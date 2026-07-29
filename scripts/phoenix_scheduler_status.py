@@ -55,6 +55,12 @@ def main() -> int:
     sampling_active = state(
         "systemctl", "--user", "is-active", "phoenix-paper-intraday-sampling.timer"
     )
+    shadow_enabled = state(
+        "systemctl", "--user", "is-enabled", "phoenix-shadow-portfolio.timer"
+    )
+    shadow_active = state(
+        "systemctl", "--user", "is-active", "phoenix-shadow-portfolio.timer"
+    )
     daily_alert_enabled = state(
         "systemctl", "is-enabled", "phoenix-daily-alert.timer"
     )
@@ -66,6 +72,15 @@ def main() -> int:
         "--user",
         "show",
         "python-stock-hourly-ops.service",
+        "-p",
+        "Result",
+        "--value",
+    )
+    _, shadow_result_raw = command(
+        "systemctl",
+        "--user",
+        "show",
+        "phoenix-shadow-portfolio.service",
         "-p",
         "Result",
         "--value",
@@ -87,6 +102,11 @@ def main() -> int:
         "toss_research_timer_active": toss_active == "active",
         "paper_sampling_timer_enabled": sampling_enabled == "enabled",
         "paper_sampling_timer_active": sampling_active == "active",
+        "shadow_portfolio_timer_enabled": shadow_enabled == "enabled",
+        "shadow_portfolio_timer_active": shadow_active == "active",
+        "shadow_portfolio_last_result_success": (
+            shadow_result_raw == "success"
+        ),
         "daily_alert_timer_enabled": daily_alert_enabled == "enabled",
         "daily_alert_timer_active": daily_alert_active == "active",
         "hourly_last_result_success": hourly_result_raw == "success",
@@ -117,6 +137,9 @@ def main() -> int:
             "toss_research_active": toss_active,
             "paper_sampling_enabled": sampling_enabled,
             "paper_sampling_active": sampling_active,
+            "shadow_portfolio_enabled": shadow_enabled,
+            "shadow_portfolio_active": shadow_active,
+            "shadow_portfolio_last_result": shadow_result_raw,
         },
         "daily_alert": {
             "enabled": daily_alert_enabled,

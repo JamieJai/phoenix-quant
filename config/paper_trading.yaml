@@ -52,6 +52,10 @@ promotion_gates:
     min_mature_trades: 500
     min_days: 60
     min_calibrated_predictions: 100
+    min_stateful_shadow_closed: 250
+    min_stateful_shadow_days: 40
+    max_stateful_shadow_mdd_pct: 10.0
+    max_execution_quote_rejection_pct: 20.0
     require_manual_signoff: true
     require_kill_switch_test: true
     require_cost_and_slippage_audit: true

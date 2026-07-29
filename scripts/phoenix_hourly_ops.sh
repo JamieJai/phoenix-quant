@@ -71,6 +71,8 @@ required=(
   "$ROOT_DIR/scripts/phoenix_paper_regime_evidence.py"
   "$ROOT_DIR/scripts/phoenix_paper_base_oos_evidence.py"
   "$ROOT_DIR/scripts/phoenix_portfolio_risk_validation.py"
+  "$ROOT_DIR/scripts/phoenix_shadow_ledger_validation.py"
+  "$ROOT_DIR/scripts/phoenix_shadow_portfolio_status.py"
   "$ROOT_DIR/scripts/phoenix_kill_switch_validation.py"
   "$ROOT_DIR/scripts/phoenix_toss_research_status.py"
   "$ROOT_DIR/scripts/phoenix_live_readiness.py"
@@ -147,6 +149,10 @@ cd "$ROOT_DIR"
   --json >"$RUN_DIR/paper_base_oos_evidence.json"
 "$PYTHON_BIN" scripts/phoenix_portfolio_risk_validation.py \
   --json >"$RUN_DIR/portfolio_risk_validation.json"
+"$PYTHON_BIN" scripts/phoenix_shadow_ledger_validation.py \
+  --json >"$RUN_DIR/shadow_ledger_validation.json"
+"$PYTHON_BIN" scripts/phoenix_shadow_portfolio_status.py \
+  --json >"$RUN_DIR/shadow_portfolio_status.json"
 "$PYTHON_BIN" scripts/phoenix_kill_switch_validation.py \
   --json >"$RUN_DIR/kill_switch_validation.json"
 "$PYTHON_BIN" scripts/phoenix_toss_research_status.py \
