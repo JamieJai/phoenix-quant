@@ -1,0 +1,16 @@
+[Unit]
+Description=Sample Phoenix paper shadow at frozen US-session times
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:15:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 09:20:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 10:30:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 12:30:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 14:30:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 15:30:00 America/New_York
+AccuracySec=30s
+RandomizedDelaySec=20s
+Unit=phoenix-paper-intraday-sampling.service
+
+[Install]
+WantedBy=timers.target

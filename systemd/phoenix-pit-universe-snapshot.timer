@@ -1,0 +1,11 @@
+[Unit]
+Description=Capture Phoenix PIT universe before the US regular open
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 22:00:00 Asia/Seoul
+Persistent=true
+RandomizedDelaySec=3m
+Unit=phoenix-pit-universe-snapshot.service
+
+[Install]
+WantedBy=timers.target

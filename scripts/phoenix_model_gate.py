@@ -40,6 +40,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--require-rolling-oos", action="store_true")
     parser.add_argument("--min-rolling-splits", type=int, default=2)
     parser.add_argument("--min-rolling-pass-rate", type=float, default=1.0)
+    parser.add_argument("--coverage-audit-json", default=None)
+    parser.add_argument("--require-data-coverage", action="store_true")
     return parser.parse_args()
 
 
@@ -270,6 +272,7 @@ def _evaluate(
     args: argparse.Namespace,
     leakage_audit: dict[str, Any] | None,
     rolling_oos: dict[str, Any] | None,
+    coverage_audit: dict[str, Any] | None,
 ) -> tuple[bool, list[str]]:
     c = candidate["metrics"]
     reasons: list[str] = []
@@ -311,6 +314,14 @@ def _evaluate(
                 failed = [str(s.get("name")) for s in rolling_oos.get("splits", []) if not s.get("passed")]
                 if failed:
                     reasons.append(f"rolling OOS failed splits: {', '.join(failed)}")
+
+    if args.require_data_coverage:
+        if coverage_audit is None:
+            reasons.append("data coverage audit is required but missing")
+        elif not coverage_audit.get("passed"):
+            failed = coverage_audit.get("failure_reasons", [])
+            detail = ", ".join(str(item) for item in failed) if failed else "unknown"
+            reasons.append(f"data coverage audit failed: {detail}")
 
     if not args.allow_xgb_promotion:
         if promotion_rank_mode != "decision":
@@ -380,8 +391,15 @@ def main() -> int:
         rolling_path = Path(args.rolling_summary_json).resolve() if args.rolling_summary_json else candidate_dir / "rolling_oos_summary.json"
         leakage_audit = _load_json_if_exists(leakage_path)
         rolling_oos = _load_json_if_exists(rolling_path)
+        coverage_path = (
+            Path(args.coverage_audit_json).resolve()
+            if args.coverage_audit_json
+            else candidate_dir / "data_coverage" / "summary.json"
+        )
+        coverage_audit = _load_json_if_exists(coverage_path)
         payload["leakage_audit"] = leakage_audit
         payload["rolling_oos"] = rolling_oos
+        payload["data_coverage_audit"] = coverage_audit
         _copy_if_exists(oos_csv, candidate_dir / "rules" / "benchmark_oos_rules.csv")
         _copy_if_exists(summary_csv, candidate_dir / "rules" / "benchmark_train_test_summary.csv")
         rank_comparison_csv = Path(payload["source_files"]["rank_mode_comparison_csv"]).resolve() if payload["source_files"].get("rank_mode_comparison_csv") else None
@@ -389,7 +407,14 @@ def main() -> int:
         _write_json(candidate_dir / "rules" / "selected_rule.json", payload["selected_rule"])
 
         current_metrics = _load_current_metrics(current_dir)
-        promoted, reasons = _evaluate(payload, current_metrics, args, leakage_audit, rolling_oos)
+        promoted, reasons = _evaluate(
+            payload,
+            current_metrics,
+            args,
+            leakage_audit,
+            rolling_oos,
+            coverage_audit,
+        )
         payload["gate"] = {
             "promoted": promoted,
             "reasons": reasons,
@@ -403,6 +428,7 @@ def main() -> int:
                 "allow_xgb_promotion": args.allow_xgb_promotion,
                 "require_leakage_audit": args.require_leakage_audit,
                 "require_rolling_oos": args.require_rolling_oos,
+                "require_data_coverage": args.require_data_coverage,
                 "min_rolling_splits": args.min_rolling_splits,
                 "min_rolling_pass_rate": args.min_rolling_pass_rate,
             },

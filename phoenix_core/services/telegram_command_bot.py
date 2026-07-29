@@ -230,7 +230,7 @@ class PhoenixTelegramBot:
             item=score_intraday_overlay_context(ctx,row['rank'])
             ranked.append((item,row,ctx))
         ranked.sort(key=lambda x:(x[2].intraday_score,-x[2].intraday_risk_score,x[0].adjusted_score),reverse=True)
-        lines=[f'Daily 후보 {candidate_n}개 중 조건 충족 종목입니다.', '조건: 전일대비+, VWAP 위, 10m/30m 상승, intraday score 기준 이상', 'Rank | Ticker | Intra | Move | Label | Reason']
+        lines=[f'Daily 후보 {candidate_n}개 중 조건 충족 종목입니다.', '조건: 전일대비+, VWAP 위 또는 VWAP 결측 시 강한 가격/리스크 대체 조건, 10m/30m 상승, intraday score 기준 이상', 'Rank | Ticker | Intra | Move | Label | Reason']
         for i,(item,row,ctx) in enumerate(ranked[:max_rows],1):
             reason=self._candidate_reason(row,ctx)
             lines.append(f"{i:>2}. {ctx.ticker:<6} intra {ctx.intraday_score:>3} risk {ctx.intraday_risk_score:>3} | daily #{row['rank']} final {row['final']:>4.1f} | 장중 관심 후보 | {reason}")
@@ -262,7 +262,17 @@ class PhoenixTelegramBot:
         return ' / '.join(dedup[:6]) if dedup else '중립'
     def _is_hot_context(self,ctx):
         momentum=((ctx.latest_10m_return_pct is not None and ctx.latest_10m_return_pct>0) or (ctx.latest_30m_return_pct is not None and ctx.latest_30m_return_pct>0))
-        return bool(ctx.current_price is not None and ctx.current_vs_prev_close_pct is not None and ctx.current_vs_prev_close_pct>0 and ctx.above_vwap is True and momentum and ctx.intraday_score>=self.hot_min_score)
+        if not (ctx.current_price is not None and ctx.current_vs_prev_close_pct is not None and ctx.current_vs_prev_close_pct>0 and momentum):
+            return False
+        vwap_ok = ctx.above_vwap is True
+        if ctx.above_vwap is None:
+            strong_move = ctx.current_vs_prev_close_pct >= 3.0 and ctx.latest_10m_return_pct is not None and ctx.latest_10m_return_pct > 0
+            risk_ok = getattr(ctx, 'intraday_risk_score', 100) <= 35
+            vwap_ok = bool(strong_move and risk_ok)
+        score_ok = ctx.intraday_score >= self.hot_min_score
+        if ctx.above_vwap is None and ctx.current_vs_prev_close_pct >= 5.0 and getattr(ctx, 'intraday_risk_score', 100) <= 35:
+            score_ok = ctx.intraday_score >= min(self.hot_min_score, 45)
+        return bool(vwap_ok and score_ok)
     def _write_top_shadow_log(self,rows,contexts,top_n,source):
         if not rows:
             return

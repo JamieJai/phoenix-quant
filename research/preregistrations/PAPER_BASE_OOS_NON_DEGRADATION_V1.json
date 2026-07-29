@@ -1,0 +1,44 @@
+{
+  "hypothesis_id": "PAPER_BASE_OOS_NON_DEGRADATION_V1",
+  "status": "FROZEN_FORWARD_ONLY",
+  "scope": "PAPER_GOVERNANCE_EVIDENCE_ONLY",
+  "frozen_at_utc": "2026-07-29T01:54:00Z",
+  "prospective_market_date_start": "2026-07-29",
+  "hypothesis": "The bounded intraday overlay must not materially degrade the frozen base score on identical prospective 5-minute outcome windows.",
+  "inputs": {
+    "base_score": "intraday_score",
+    "overlay_score": "overlay_score",
+    "target": "forward_return_5m",
+    "timestamp": "timestamp"
+  },
+  "selection": {
+    "group": "America/New_York market_date",
+    "rule": "top 25 percent within each market date, minimum one row",
+    "base_and_overlay_windows_identical": true,
+    "cost_fraction_roundtrip": 0.0014
+  },
+  "timestamp_contract": {
+    "timezone_aware_required": true,
+    "storage_timezone": "UTC",
+    "target_must_be_mature": true,
+    "historical_rows_allowed_for_gate": false
+  },
+  "minimum_evidence": {
+    "prospective_mature_rows": 100,
+    "prospective_market_dates": 20,
+    "base_selected_rows": 25,
+    "overlay_selected_rows": 25
+  },
+  "acceptance_gate": {
+    "overlay_minus_base_net_mean_min": -0.0002,
+    "overlay_minus_base_hit_rate_min": -0.02,
+    "threshold_retuning_allowed": false
+  },
+  "safety": {
+    "production_score_changed": false,
+    "champion_changed": false,
+    "paper_signal_changed": false,
+    "broker_route_allowed": false,
+    "live_enable_allowed": false
+  }
+}

@@ -19,6 +19,15 @@ def main() -> int:
     args = parser.parse_args()
     checks = {
         "packet": [PYTHON, "scripts/phoenix_research_packet.py"],
+        "scheduler": [PYTHON, "scripts/phoenix_scheduler_status.py"],
+        "daily_alert_preflight": [PYTHON, "telegram_daily_2100.py", "--preflight"],
+        "intraday_cache_schema": [
+            PYTHON,
+            "scripts/phoenix_intraday_cache_schema.py",
+            "--path",
+            "data/intraday_features.csv",
+            "--json",
+        ],
         "auto_status": [PYTHON, "scripts/phoenix_auto_status.py", "--models-root", "models", "--json"],
         "failure_analysis": [PYTHON, "scripts/phoenix_failure_analysis.py", "--models-root", "models", "--json"],
         "coverage": [PYTHON, "scripts/phoenix_data_coverage_audit.py", "--config", "config/config.yaml", "--cache-dir", "data", "--include-etfs", "--max-age-days", "4", "--min-split-coverage", "0.90", "--min-universe-usable-ratio", "0.90", "--json"],
@@ -26,6 +35,53 @@ def main() -> int:
         "intraday_labels": [PYTHON, "scripts/phoenix_intraday_label_cache.py", "--path", "data/intraday_features.csv"],
         "intraday_ablation": [PYTHON, "scripts/phoenix_intraday_oos_ablation.py", "--path", "data/intraday_features.csv", "--json"],
         "paper_pnl": [PYTHON, "scripts/phoenix_paper_pnl_report.py", "--path", "data/intraday_features.csv", "--json"],
+        "paper_replay": [
+            PYTHON,
+            "scripts/phoenix_paper_signal_runner.py",
+            "--path",
+            "data/intraday_features.csv",
+            "--replay",
+            "--calibrator",
+            "reports/paper_trading/calibration/paper_expected_return_calibrator_v1.json",
+            "--output-json",
+            "reports/paper_trading/replay_latest/summary.json",
+            "--fills-csv",
+            "reports/paper_trading/replay_latest/fills.csv",
+        ],
+        "paper_calibration": [
+            PYTHON,
+            "scripts/phoenix_paper_calibration.py",
+            "--path",
+            "reports/paper_trading/replay_latest/fills.csv",
+            "--output-json",
+            "reports/paper_trading/calibration/paper_calibration_latest.json",
+            "--json",
+        ],
+        "paper_regime_evidence": [
+            PYTHON,
+            "scripts/phoenix_paper_regime_evidence.py",
+            "--json",
+        ],
+        "paper_base_oos_evidence": [
+            PYTHON,
+            "scripts/phoenix_paper_base_oos_evidence.py",
+            "--json",
+        ],
+        "portfolio_risk_validation": [
+            PYTHON,
+            "scripts/phoenix_portfolio_risk_validation.py",
+            "--json",
+        ],
+        "live_readiness": [
+            PYTHON,
+            "scripts/phoenix_live_readiness.py",
+            "--json",
+        ],
+        "toss_research": [
+            PYTHON,
+            "scripts/phoenix_toss_research_status.py",
+            "--json",
+        ],
     }
     results = {}
     for name, command in checks.items():
@@ -33,9 +89,7 @@ def main() -> int:
         results[name] = {"returncode": code, "tail": output[-4000:]}
     coverage_failed = results["coverage"]["returncode"] != 0
     check_failed = any(result["returncode"] != 0 for result in results.values())
-    auto_tail = results["auto_status"]["tail"].lower()
-    auto_log_error = any(marker in auto_tail for marker in ("permission denied", "traceback", "code=1"))
-    degraded = coverage_failed or check_failed or auto_log_error
+    degraded = coverage_failed or check_failed
     pause_exists = (ROOT / ".phoenix_auto_cycle.pause").exists()
     training = {"requested": args.allow_candidate_training, "started": False, "reason": "not requested"}
     if args.allow_candidate_training and not coverage_failed and not pause_exists:

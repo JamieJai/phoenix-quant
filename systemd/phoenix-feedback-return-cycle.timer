@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Phoenix Quant feedback return update after daily data should be available
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=phoenix-feedback-return-cycle.service
+
+[Install]
+WantedBy=timers.target

@@ -63,9 +63,16 @@ required=(
   "$ROOT_DIR/scripts/phoenix_update_feedback_returns.py"
   "$ROOT_DIR/scripts/phoenix_feedback_summary.py"
   "$ROOT_DIR/scripts/phoenix_intraday_label_cache.py"
+  "$ROOT_DIR/scripts/phoenix_intraday_cache_schema.py"
   "$ROOT_DIR/scripts/phoenix_paper_signal_runner.py"
+  "$ROOT_DIR/reports/paper_trading/calibration/paper_expected_return_calibrator_v1.json"
   "$ROOT_DIR/scripts/phoenix_paper_pnl_report.py"
   "$ROOT_DIR/scripts/phoenix_paper_calibration.py"
+  "$ROOT_DIR/scripts/phoenix_paper_regime_evidence.py"
+  "$ROOT_DIR/scripts/phoenix_paper_base_oos_evidence.py"
+  "$ROOT_DIR/scripts/phoenix_portfolio_risk_validation.py"
+  "$ROOT_DIR/scripts/phoenix_kill_switch_validation.py"
+  "$ROOT_DIR/scripts/phoenix_toss_research_status.py"
   "$ROOT_DIR/scripts/phoenix_live_readiness.py"
   "$ROOT_DIR/scripts/phoenix_auto_status.py"
 )
@@ -112,19 +119,38 @@ cd "$ROOT_DIR"
   --cache-dir data >"$RUN_DIR/feedback_update.txt"
 "$PYTHON_BIN" scripts/phoenix_feedback_summary.py \
   --feedback-csv data/operator_feedback.csv >"$RUN_DIR/feedback_summary.txt"
+"$PYTHON_BIN" scripts/phoenix_intraday_cache_schema.py \
+  --path data/intraday_features.csv \
+  --json >"$RUN_DIR/intraday_cache_schema.json"
 "$PYTHON_BIN" scripts/phoenix_intraday_label_cache.py \
-  --path data/intraday_features.csv >"$RUN_DIR/intraday_labels.txt"
+  --path data/intraday_features.csv \
+  --fetch-matured \
+  --prospective-start 2026-07-29 >"$RUN_DIR/intraday_labels.txt"
 "$PYTHON_BIN" scripts/phoenix_paper_signal_runner.py \
   --path data/intraday_features.csv \
   --limit 500 \
   --replay \
-  --json >"$RUN_DIR/paper_signals.json"
+  --calibrator reports/paper_trading/calibration/paper_expected_return_calibrator_v1.json \
+  --output-json "$RUN_DIR/paper_signals.json" \
+  --fills-csv "$RUN_DIR/paper_fills.csv" \
+  >"$RUN_DIR/paper_replay.txt"
 "$PYTHON_BIN" scripts/phoenix_paper_pnl_report.py \
   --path data/intraday_features.csv \
   --json >"$RUN_DIR/paper_pnl.json"
 "$PYTHON_BIN" scripts/phoenix_paper_calibration.py \
-  --path data/intraday_features.csv \
+  --path "$RUN_DIR/paper_fills.csv" \
+  --output-json reports/paper_trading/calibration/paper_calibration_latest.json \
   --json >"$RUN_DIR/paper_calibration.json"
+"$PYTHON_BIN" scripts/phoenix_paper_regime_evidence.py \
+  --json >"$RUN_DIR/paper_regime_evidence.json"
+"$PYTHON_BIN" scripts/phoenix_paper_base_oos_evidence.py \
+  --json >"$RUN_DIR/paper_base_oos_evidence.json"
+"$PYTHON_BIN" scripts/phoenix_portfolio_risk_validation.py \
+  --json >"$RUN_DIR/portfolio_risk_validation.json"
+"$PYTHON_BIN" scripts/phoenix_kill_switch_validation.py \
+  --json >"$RUN_DIR/kill_switch_validation.json"
+"$PYTHON_BIN" scripts/phoenix_toss_research_status.py \
+  --json >"$RUN_DIR/toss_research_status.json"
 "$PYTHON_BIN" scripts/phoenix_live_readiness.py \
   --cache data/intraday_features.csv \
   --config config/paper_trading.yaml \

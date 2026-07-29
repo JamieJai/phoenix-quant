@@ -55,6 +55,22 @@ legacy/toplive/hot 간 중복 ticker 수
 라벨별 평균 성과
 ```
 
+## Intraday Similarity Checklist
+
+장중 1분봉 유사도는 `/toplive`와 `/hot`의 참고 관찰 항목으로만 기록합니다. 일봉 기반 `/top` 순위를 대체하거나 promotion gate를 완화하는 근거로 쓰지 않습니다.
+
+체크할 항목:
+
+- 관측 시각, 비교 ticker pair, 사용한 intraday window를 함께 기록한다.
+- 같은 pair의 일봉 유사도와 1분봉 유사도를 분리해서 해석한다.
+- 이후 1D/3D/5D 성과와 장중 follow-through를 shadow 결과에 남긴다.
+- 유사도가 높았지만 성과가 나빴으면 operator feedback reason에 `false_similarity`를 사용한다.
+
+2026-07-10 관찰 메모:
+
+- INTC와 MRVL이 1분봉 기준으로 높은 장중 유사도를 보임.
+- 다음 shadow/feedback 점검 때 daily similarity가 아닌 intraday similarity pair로 따로 확인한다.
+
 ## Label Semantics
 
 ```text

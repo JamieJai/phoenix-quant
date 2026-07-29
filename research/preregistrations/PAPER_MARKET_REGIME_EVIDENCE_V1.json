@@ -1,0 +1,50 @@
+{
+  "hypothesis_id": "PAPER_MARKET_REGIME_EVIDENCE_V1",
+  "status": "FROZEN_FORWARD_ONLY",
+  "scope": "PAPER_GOVERNANCE_EVIDENCE_ONLY",
+  "frozen_at_utc": "2026-07-29T01:50:00Z",
+  "prospective_market_date_start": "2026-07-29",
+  "economic_purpose": "Measure whether paper outcomes have been observed across materially different point-in-time market states without changing any trading score or signal.",
+  "inputs": {
+    "stock_return_10m_pct": "ret_fast_3bar_pct",
+    "relative_return_vs_qqq_pct": "sector_rs_qqq_pct",
+    "relative_return_vs_smh_pct": "sector_rs_smh_pct",
+    "relative_return_vs_soxx_pct": "sector_rs_soxx_pct"
+  },
+  "formula": {
+    "qqq_return_10m_pct": "stock_return_10m_pct - relative_return_vs_qqq_pct",
+    "smh_return_10m_pct": "stock_return_10m_pct - relative_return_vs_smh_pct",
+    "soxx_return_10m_pct": "stock_return_10m_pct - relative_return_vs_soxx_pct",
+    "semi_return_10m_pct": "(smh_return_10m_pct + soxx_return_10m_pct) / 2",
+    "risk_on": "qqq_return_10m_pct >= 0.20 and semi_return_10m_pct >= 0.20",
+    "risk_off": "qqq_return_10m_pct <= -0.20 and semi_return_10m_pct <= -0.20",
+    "mixed": "all other complete observations",
+    "unknown": "any required input missing or timestamp not timezone-aware"
+  },
+  "timestamp_contract": {
+    "feature_available_at": "source intraday row timestamp",
+    "all_inputs_available_by_feature_time": true,
+    "timezone_required": true,
+    "storage_timezone": "UTC",
+    "market_date_timezone": "America/New_York",
+    "lookahead_rows_excluded": true
+  },
+  "missing_policy": {
+    "imputation": "NONE",
+    "unknown_is_eligible": false,
+    "naive_timestamp_is_prospective": false
+  },
+  "acceptance_gate": {
+    "minimum_distinct_regimes": 2,
+    "minimum_mature_5m_outcomes_per_regime": 20,
+    "historical_rows_allowed_for_gate": false,
+    "threshold_retuning_allowed": false
+  },
+  "safety": {
+    "production_score_changed": false,
+    "champion_changed": false,
+    "paper_signal_changed": false,
+    "broker_route_allowed": false,
+    "live_enable_allowed": false
+  }
+}

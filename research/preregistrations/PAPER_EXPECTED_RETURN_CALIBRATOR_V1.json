@@ -1,0 +1,38 @@
+{
+  "hypothesis_id": "PAPER_EXPECTED_RETURN_CALIBRATOR_V1",
+  "status": "FROZEN_PROSPECTIVE_CALIBRATION_BASELINE",
+  "scope": "PAPER_FILL_METADATA_ONLY",
+  "frozen_at_utc": "2026-07-29T02:15:00Z",
+  "prospective_market_date_start": "2026-07-29",
+  "development_data": {
+    "source": "accepted paper replay fills before prospective start",
+    "outcome": "forward_return_5m gross return",
+    "minimum_mature_rows": 40,
+    "maximum_absolute_return": 1.0,
+    "historical_use": "DEVELOPMENT_ONLY"
+  },
+  "formula": {
+    "model_type": "CONSTANT_HISTORICAL_MEAN_GROSS_RETURN",
+    "prediction": "arithmetic mean of valid development forward_return_5m",
+    "ticker_or_score_conditioning": false,
+    "retuning_from_prospective_results": false
+  },
+  "application": {
+    "apply_only_on_or_after_prospective_start": true,
+    "overwrite_source_prediction": false,
+    "selection_or_ranking_use": false,
+    "order_gate_use": false,
+    "position_size_use": false
+  },
+  "acceptance": {
+    "minimum_paired_prospective_outcomes_for_live_review": 100,
+    "interpretation": "calibration baseline only, not alpha evidence"
+  },
+  "safety": {
+    "production_score_changed": false,
+    "champion_changed": false,
+    "paper_signal_changed": false,
+    "broker_route_allowed": false,
+    "live_enable_allowed": false
+  }
+}

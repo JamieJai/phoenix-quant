@@ -1,0 +1,11 @@
+[Unit]
+Description=Run bounded Toss US research backfill batches
+
+[Timer]
+OnCalendar=*:10,25,40,55
+Persistent=true
+RandomizedDelaySec=2m
+Unit=phoenix-toss-us-research-backfill.service
+
+[Install]
+WantedBy=timers.target

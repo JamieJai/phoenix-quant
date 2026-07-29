@@ -73,6 +73,16 @@ class BenchmarkConfig:
     train_top_k_rules: int
     rank_mode: str
     xgb_blend_weights: List[float]
+    historical_rule_prior_limit: int
+    historical_rule_prior_lookback: int
+    historical_rule_prior_root: Optional[str]
+    adverse_sector_skip: List[str]
+    adverse_regime_skip: List[str]
+    adverse_conditional_sector_skip: List[str]
+    adverse_conditional_regime_skip: List[str]
+    adverse_conditional_max_rank_score: Optional[float]
+    adverse_min_sector_return_5d: Optional[float]
+    adverse_min_market_score: Optional[float]
 
 
 def _ensure_dirs(config: AppConfig) -> None:
@@ -317,6 +327,10 @@ def _parse_xgb_blend_weights(value: Optional[str | float]) -> List[float]:
     return weights
 
 
+def _needs_xgb_model(weights: Sequence[float]) -> bool:
+    return any(abs(float(weight)) > 1e-12 for weight in weights)
+
+
 def _primary_rank_mode(rank_mode: str) -> str:
     return "ranking" if str(rank_mode) == "both" else str(rank_mode)
 
@@ -327,6 +341,85 @@ def _primary_xgb_blend_weight(weights: Sequence[float]) -> float:
         if abs(weight - 0.30) <= 1e-9:
             return 0.30
     return values[0] if values else 0.30
+
+
+def _historical_rule_priors(
+    root: str | None,
+    *,
+    limit: int,
+    lookback: int,
+) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    root_path = Path(root or "models/candidates")
+    if not root_path.exists():
+        return []
+
+    candidate_dirs = [p for p in root_path.iterdir() if p.is_dir()]
+    candidate_dirs = sorted(candidate_dirs, key=lambda p: (p.stat().st_mtime, str(p)), reverse=True)
+    if lookback > 0:
+        candidate_dirs = candidate_dirs[:lookback]
+
+    rows: List[Dict[str, Any]] = []
+    for recency_rank, candidate_dir in enumerate(candidate_dirs):
+        csv_paths = sorted(
+            candidate_dir.glob("reports/benchmark_train_test_*/benchmark_oos_rules.csv"),
+            key=lambda p: (p.stat().st_mtime, str(p)),
+            reverse=True,
+        )
+        if not csv_paths:
+            continue
+        try:
+            df = pd.read_csv(csv_paths[0])
+        except Exception:
+            continue
+        for _, row in df.iterrows():
+            tp = float(row.get("take_profit", np.nan))
+            sl = float(row.get("stop_loss", np.nan))
+            hold = int(row.get("hold_days", 0) or 0)
+            alpha = float(row.get("portfolio_alpha", np.nan))
+            p_value = float(row.get("portfolio_p_value", np.nan))
+            portfolio = float(row.get("portfolio_return_by_date_mean", np.nan))
+            mdd = float(row.get("portfolio_mdd", np.nan))
+            active = float(row.get("n_active_trades", np.nan))
+            if not all(np.isfinite(v) for v in [tp, sl, alpha, p_value, portfolio, mdd, active]) or hold <= 0:
+                continue
+            rows.append({
+                "take_profit": tp,
+                "stop_loss": sl,
+                "hold_days": hold,
+                "rule_source": "historical_oos_prior",
+                "rule_name": f"historical_prior_{candidate_dir.name}_{_rule_key({'take_profit': tp, 'stop_loss': sl, 'hold_days': hold})}",
+                "historical_candidate": candidate_dir.name,
+                "historical_oos_rank": row.get("oos_rank", np.nan),
+                "historical_portfolio_alpha": alpha,
+                "historical_portfolio_p_value": p_value,
+                "historical_portfolio_return_by_date_mean": portfolio,
+                "historical_portfolio_mdd": mdd,
+                "historical_active_trades": active,
+                "historical_recency_rank": recency_rank,
+            })
+
+    rows.sort(
+        key=lambda r: (
+            -float(r["historical_portfolio_alpha"]),
+            float(r["historical_portfolio_p_value"]),
+            float(r["historical_portfolio_mdd"]),
+            -float(r["historical_portfolio_return_by_date_mean"]),
+            int(r["historical_recency_rank"]),
+        )
+    )
+    unique: List[Dict[str, Any]] = []
+    seen: set[tuple[float, float, int]] = set()
+    for row in rows:
+        key = (round(float(row["take_profit"]), 6), round(float(row["stop_loss"]), 6), int(row["hold_days"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 def _blend_rank_score(
@@ -479,6 +572,13 @@ def _rank_mode_comparison(
             max_gap_open=bench.max_gap_open,
             entry_penalty_bps=bench.entry_penalty_bps,
             top_n=bench.top_n,
+            adverse_sector_skip=bench.adverse_sector_skip,
+            adverse_regime_skip=bench.adverse_regime_skip,
+            adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+            adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+            adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+            adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+            adverse_min_market_score=bench.adverse_min_market_score,
         )
         portfolio_mean = float(trade_summary.get("portfolio_return_by_date_mean", np.nan))
         p_value = stats_engine.empirical_p_value(portfolio_mean, random_values, higher_is_better=True) if len(random_values) and np.isfinite(portfolio_mean) else np.nan
@@ -543,6 +643,17 @@ def _summarize_rows(rows: List[Dict[str, Any]], top_n: int) -> Dict[str, Any]:
     }
 
 
+
+
+def _parse_csv_list(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    values: List[str] = []
+    for part in str(raw).split(","):
+        value = part.strip()
+        if value:
+            values.append(value)
+    return list(dict.fromkeys(values))
 
 
 def _parse_top_list(top_list: Optional[str], top_n: int) -> List[int]:
@@ -871,6 +982,88 @@ def _filter_tradable_rows(
 
 
 
+def _adverse_filter_info(
+    row: Dict[str, Any],
+    *,
+    adverse_sector_skip: Optional[Sequence[str]] = None,
+    adverse_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_sector_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_max_rank_score: Optional[float] = None,
+    adverse_min_sector_return_5d: Optional[float] = None,
+    adverse_min_market_score: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    sectors = {str(v).strip().upper() for v in (adverse_sector_skip or []) if str(v).strip()}
+    regimes = {str(v).strip().lower() for v in (adverse_regime_skip or []) if str(v).strip()}
+    conditional_sectors = {str(v).strip().upper() for v in (adverse_conditional_sector_skip or []) if str(v).strip()}
+    conditional_regimes = {str(v).strip().lower() for v in (adverse_conditional_regime_skip or []) if str(v).strip()}
+    sector = str(row.get("sector_etf", "")).strip().upper()
+    regime = str(row.get("regime", "")).strip()
+
+    info: Dict[str, Any] = {
+        "is_trade_eligible": False,
+        "filter_reason": "unknown",
+        "asof_close": np.nan,
+        "asof_volume": np.nan,
+        "asof_dollar_volume": np.nan,
+        "entry_open": np.nan,
+        "gap_open_return": np.nan,
+        "adverse_filter_type": "",
+        "adverse_filter_value": "",
+    }
+    if sector and sector in sectors:
+        info["filter_reason"] = "filtered_by_adverse_sector"
+        info["adverse_filter_type"] = "sector_etf"
+        info["adverse_filter_value"] = sector
+        return info
+    if regime and regime.lower() in regimes:
+        info["filter_reason"] = "filtered_by_adverse_regime"
+        info["adverse_filter_type"] = "regime"
+        info["adverse_filter_value"] = regime
+        return info
+    if sector and sector in conditional_sectors:
+        conditional_hit = False
+        reasons: List[str] = []
+        if conditional_regimes and regime.lower() in conditional_regimes:
+            conditional_hit = True
+            reasons.append(f"regime={regime}")
+        if adverse_conditional_max_rank_score is not None:
+            rank_score = pd.to_numeric(pd.Series([row.get("final_rank_score")]), errors="coerce").iloc[0]
+            if pd.notna(rank_score) and np.isfinite(float(rank_score)) and float(rank_score) <= float(adverse_conditional_max_rank_score):
+                conditional_hit = True
+                reasons.append(f"final_rank_score<={float(adverse_conditional_max_rank_score):g}")
+        if conditional_hit:
+            info["filter_reason"] = "filtered_by_adverse_conditional_sector"
+            info["adverse_filter_type"] = "conditional_sector"
+            info["adverse_filter_value"] = f"{sector}|{';'.join(reasons)}" if reasons else sector
+            return info
+    numeric_enabled = False
+    numeric_hit = True
+    numeric_reasons: List[str] = []
+    if adverse_min_sector_return_5d is not None:
+        numeric_enabled = True
+        threshold = float(adverse_min_sector_return_5d)
+        value = pd.to_numeric(pd.Series([row.get("sector_return_5d")]), errors="coerce").iloc[0]
+        if pd.notna(value) and np.isfinite(float(value)) and float(value) >= threshold:
+            numeric_reasons.append(f"sector_return_5d>={threshold:g}")
+        else:
+            numeric_hit = False
+    if adverse_min_market_score is not None:
+        numeric_enabled = True
+        threshold = float(adverse_min_market_score)
+        value = pd.to_numeric(pd.Series([row.get("market_score")]), errors="coerce").iloc[0]
+        if pd.notna(value) and np.isfinite(float(value)) and float(value) >= threshold:
+            numeric_reasons.append(f"market_score>={threshold:g}")
+        else:
+            numeric_hit = False
+    if numeric_enabled and numeric_hit:
+        info["filter_reason"] = "filtered_by_adverse_numeric"
+        info["adverse_filter_type"] = "numeric_threshold"
+        info["adverse_filter_value"] = ";".join(numeric_reasons)
+        return info
+    return None
+
+
 def _execution_filter_info(
     row: Dict[str, Any],
     full_raw: Dict[str, pd.DataFrame],
@@ -1040,12 +1233,35 @@ def _build_trade_rows_with_engine_v20(
     max_gap_open: Optional[float] = None,
     entry_penalty_bps: float = 0.0,
     top_n: int = 10,
+    adverse_sector_skip: Optional[Sequence[str]] = None,
+    adverse_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_sector_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_max_rank_score: Optional[float] = None,
+    adverse_min_sector_return_5d: Optional[float] = None,
+    adverse_min_market_score: Optional[float] = None,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     active_rows: List[Dict[str, Any]] = []
     cash_rows: List[Dict[str, Any]] = []
     filter_counts: Dict[str, int] = {}
 
     for row in selected_rows:
+        adverse_info = _adverse_filter_info(
+            row,
+            adverse_sector_skip=adverse_sector_skip,
+            adverse_regime_skip=adverse_regime_skip,
+            adverse_conditional_sector_skip=adverse_conditional_sector_skip,
+            adverse_conditional_regime_skip=adverse_conditional_regime_skip,
+            adverse_conditional_max_rank_score=adverse_conditional_max_rank_score,
+            adverse_min_sector_return_5d=adverse_min_sector_return_5d,
+            adverse_min_market_score=adverse_min_market_score,
+        )
+        if adverse_info is not None:
+            reason = str(adverse_info.get("filter_reason", "unknown"))
+            filter_counts[reason] = filter_counts.get(reason, 0) + 1
+            cash_rows.append(_cash_slot_row(row, adverse_info, top_n=top_n))
+            continue
+
         info = _execution_filter_info(
             row,
             full_raw,
@@ -1097,6 +1313,13 @@ def _build_trade_rows_with_engine_v20(
         "min_dollar_volume": float(min_dollar_volume or 0.0),
         "min_price": float(min_price or 0.0),
         "max_gap_open": np.nan if max_gap_open is None else float(max_gap_open),
+        "adverse_sector_skip": ",".join(adverse_sector_skip or []),
+        "adverse_regime_skip": ",".join(adverse_regime_skip or []),
+        "adverse_conditional_sector_skip": ",".join(adverse_conditional_sector_skip or []),
+        "adverse_conditional_regime_skip": ",".join(adverse_conditional_regime_skip or []),
+        "adverse_conditional_max_rank_score": np.nan if adverse_conditional_max_rank_score is None else float(adverse_conditional_max_rank_score),
+        "adverse_min_sector_return_5d": np.nan if adverse_min_sector_return_5d is None else float(adverse_min_sector_return_5d),
+        "adverse_min_market_score": np.nan if adverse_min_market_score is None else float(adverse_min_market_score),
     })
     for reason, count in filter_counts.items():
         summary[f"count_{reason}"] = int(count)
@@ -1148,6 +1371,13 @@ def _grid_search_trade_rules(
     max_gap_open: Optional[float] = None,
     entry_penalty_bps: float = 0.0,
     top_n: int = 10,
+    adverse_sector_skip: Optional[Sequence[str]] = None,
+    adverse_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_sector_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_max_rank_score: Optional[float] = None,
+    adverse_min_sector_return_5d: Optional[float] = None,
+    adverse_min_market_score: Optional[float] = None,
 ) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
     for tp in tp_values:
@@ -1168,6 +1398,13 @@ def _grid_search_trade_rules(
                     max_gap_open=max_gap_open,
                     entry_penalty_bps=entry_penalty_bps,
                     top_n=top_n,
+                    adverse_sector_skip=adverse_sector_skip,
+                    adverse_regime_skip=adverse_regime_skip,
+                    adverse_conditional_sector_skip=adverse_conditional_sector_skip,
+                    adverse_conditional_regime_skip=adverse_conditional_regime_skip,
+                    adverse_conditional_max_rank_score=adverse_conditional_max_rank_score,
+                    adverse_min_sector_return_5d=adverse_min_sector_return_5d,
+                    adverse_min_market_score=adverse_min_market_score,
                 )
                 summary.update(_subperiod_stability_from_trade_rows(_trade_rows, top_n=top_n))
                 summary = dict(summary)
@@ -1208,6 +1445,13 @@ def _build_trade_outcome_cache(
     max_gap_open: Optional[float] = None,
     entry_penalty_bps: float = 0.0,
     top_n: int = 10,
+    adverse_sector_skip: Optional[Sequence[str]] = None,
+    adverse_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_sector_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_regime_skip: Optional[Sequence[str]] = None,
+    adverse_conditional_max_rank_score: Optional[float] = None,
+    adverse_min_sector_return_5d: Optional[float] = None,
+    adverse_min_market_score: Optional[float] = None,
 ) -> Dict[tuple[str, str], Dict[str, Any]]:
     """Random trade baseline용 캐시.
 
@@ -1231,6 +1475,13 @@ def _build_trade_outcome_cache(
         max_gap_open=max_gap_open,
         entry_penalty_bps=entry_penalty_bps,
         top_n=top_n,
+        adverse_sector_skip=adverse_sector_skip,
+        adverse_regime_skip=adverse_regime_skip,
+        adverse_conditional_sector_skip=adverse_conditional_sector_skip,
+        adverse_conditional_regime_skip=adverse_conditional_regime_skip,
+        adverse_conditional_max_rank_score=adverse_conditional_max_rank_score,
+        adverse_min_sector_return_5d=adverse_min_sector_return_5d,
+        adverse_min_market_score=adverse_min_market_score,
     )
     cache: Dict[tuple[str, str], Dict[str, Any]] = {}
     for row in trade_rows:
@@ -1685,10 +1936,11 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
             prebuilt = _build_prebuilt_for_asof(app_config, train_raw, retrain=True, k=k)
             ranking_engine = EngineRegistry.get("ranking_engine", app_config.engines.get("ranking_engine", "ranking_v1"))
             xgb_model = None
-            try:
-                xgb_model = ranking_engine._fit_xgb_model(prebuilt.get("records", []))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger("benchmark").debug("%s xgb disabled: %s", as_of_str, exc)
+            if _needs_xgb_model(bench.xgb_blend_weights):
+                try:
+                    xgb_model = ranking_engine._fit_xgb_model(prebuilt.get("records", []))
+                except Exception as exc:  # noqa: BLE001
+                    logging.getLogger("benchmark").debug("%s xgb disabled: %s", as_of_str, exc)
             rows_for_date: List[Dict[str, Any]] = []
             for ticker in app_config.universe:
                 if ticker not in train_raw:
@@ -1771,6 +2023,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
             max_gap_open=bench.max_gap_open,
             entry_penalty_bps=bench.entry_penalty_bps,
             top_n=bench.top_n,
+            adverse_sector_skip=bench.adverse_sector_skip,
+            adverse_regime_skip=bench.adverse_regime_skip,
+            adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+            adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+            adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+            adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+            adverse_min_market_score=bench.adverse_min_market_score,
         )
         portfolio_by_date_df = _portfolio_returns_by_date(trade_rows, top_n=bench.top_n)
 
@@ -1790,6 +2049,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
                 max_gap_open=bench.max_gap_open,
                 entry_penalty_bps=bench.entry_penalty_bps,
                 top_n=bench.top_n,
+                adverse_sector_skip=bench.adverse_sector_skip,
+                adverse_regime_skip=bench.adverse_regime_skip,
+                adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+                adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+                adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+                adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+                adverse_min_market_score=bench.adverse_min_market_score,
             )
             trade_random_distribution_df = _random_trade_distribution(
                 candidate_rows,
@@ -1818,6 +2084,13 @@ def run_benchmark(app_config: AppConfig, bench: BenchmarkConfig) -> Dict[str, An
             max_gap_open=bench.max_gap_open,
             entry_penalty_bps=bench.entry_penalty_bps,
             top_n=bench.top_n,
+            adverse_sector_skip=bench.adverse_sector_skip,
+            adverse_regime_skip=bench.adverse_regime_skip,
+            adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+            adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+            adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+            adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+            adverse_min_market_score=bench.adverse_min_market_score,
         )
 
     if trade_summary:
@@ -1972,6 +2245,13 @@ def _evaluate_fixed_rule_on_rows(
         max_gap_open=bench.max_gap_open,
         entry_penalty_bps=bench.entry_penalty_bps,
         top_n=bench.top_n,
+        adverse_sector_skip=bench.adverse_sector_skip,
+        adverse_regime_skip=bench.adverse_regime_skip,
+        adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+        adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+        adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+        adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+        adverse_min_market_score=bench.adverse_min_market_score,
     )
     trade_cache = _build_trade_outcome_cache(
         candidate_rows,
@@ -1988,6 +2268,13 @@ def _evaluate_fixed_rule_on_rows(
         max_gap_open=bench.max_gap_open,
         entry_penalty_bps=bench.entry_penalty_bps,
         top_n=bench.top_n,
+        adverse_sector_skip=bench.adverse_sector_skip,
+        adverse_regime_skip=bench.adverse_regime_skip,
+        adverse_conditional_sector_skip=bench.adverse_conditional_sector_skip,
+        adverse_conditional_regime_skip=bench.adverse_conditional_regime_skip,
+        adverse_conditional_max_rank_score=bench.adverse_conditional_max_rank_score,
+        adverse_min_sector_return_5d=bench.adverse_min_sector_return_5d,
+        adverse_min_market_score=bench.adverse_min_market_score,
     )
     trade_random_dist = _random_trade_distribution(
         candidate_rows,
@@ -2060,13 +2347,23 @@ def run_train_test_validation(app_config: AppConfig, bench: BenchmarkConfig) -> 
     if grid is None or grid.empty:
         raise RuntimeError("Train grid_search 결과가 없습니다.")
 
-    # Train 상위 K + default rule. 중복 제거.
+    # Train 상위 K + recent historical OOS priors + default rule. 중복 제거.
     rule_rows: List[Dict[str, Any]] = []
     for _, row in grid.head(int(bench.train_top_k_rules)).iterrows():
         d = row.to_dict()
         d["rule_source"] = "train_grid_top"
         d["rule_name"] = f"train_grid_rank_{int(row.get('grid_rank', len(rule_rows)+1))}"
         rule_rows.append(d)
+
+    historical_priors = _historical_rule_priors(
+        bench.historical_rule_prior_root,
+        limit=int(bench.historical_rule_prior_limit),
+        lookback=int(bench.historical_rule_prior_lookback),
+    )
+    if historical_priors:
+        print(f"  [info] historical OOS rule priors added: {len(historical_priors)}")
+        rule_rows.extend(historical_priors)
+
     default_rule = {
         "take_profit": bench.take_profit,
         "stop_loss": bench.stop_loss,
@@ -2113,10 +2410,13 @@ def run_train_test_validation(app_config: AppConfig, bench: BenchmarkConfig) -> 
             rule_name=str(r.get("rule_name", _rule_key(r))),
             rule_source=str(r.get("rule_source", "train_grid_top")),
         )
-        # train metrics attach
+        # train / prior metrics attach
         for key in ["grid_rank", "profit_factor", "avg_return", "mdd", "portfolio_return_by_date_mean", "train_min_subperiod_return", "train_positive_subperiods", "stability_score"]:
             if key in r:
                 row[f"train_{key}"] = r[key]
+        for key in ["historical_candidate", "historical_oos_rank", "historical_portfolio_alpha", "historical_portfolio_p_value", "historical_portfolio_return_by_date_mean", "historical_portfolio_mdd", "historical_active_trades"]:
+            if key in r:
+                row[key] = r[key]
         oos_rows.append(row)
 
     oos_df = pd.DataFrame(oos_rows)
@@ -2148,8 +2448,19 @@ def run_train_test_validation(app_config: AppConfig, bench: BenchmarkConfig) -> 
         "min_dollar_volume": bench.min_dollar_volume,
         "max_gap_open": np.nan if bench.max_gap_open is None else bench.max_gap_open,
         "entry_penalty_bps": bench.entry_penalty_bps,
+        "adverse_sector_skip": ",".join(bench.adverse_sector_skip),
+        "adverse_regime_skip": ",".join(bench.adverse_regime_skip),
+        "adverse_conditional_sector_skip": ",".join(bench.adverse_conditional_sector_skip),
+        "adverse_conditional_regime_skip": ",".join(bench.adverse_conditional_regime_skip),
+        "adverse_conditional_max_rank_score": np.nan if bench.adverse_conditional_max_rank_score is None else bench.adverse_conditional_max_rank_score,
+        "adverse_min_sector_return_5d": np.nan if bench.adverse_min_sector_return_5d is None else bench.adverse_min_sector_return_5d,
+        "adverse_min_market_score": np.nan if bench.adverse_min_market_score is None else bench.adverse_min_market_score,
         "rank_mode": bench.rank_mode,
         "xgb_blend_weights": ",".join(str(w) for w in bench.xgb_blend_weights),
+        "historical_rule_prior_limit": bench.historical_rule_prior_limit,
+        "historical_rule_prior_lookback": bench.historical_rule_prior_lookback,
+        "historical_rule_prior_root": bench.historical_rule_prior_root or "models/candidates",
+        "historical_rule_prior_count": len(historical_priors),
         "train_report_dir": os.path.dirname(train_result["paths"]["summary"]),
         "test_report_dir": os.path.dirname(test_result["paths"]["summary"]),
     }
@@ -2214,6 +2525,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-price", type=float, default=0.0, help="실행 필터용 as_of 기준 최소 주가. 실패 시 cash slot")
     p.add_argument("--max-gap-open", type=float, default=None, help="next_open gap-up 최대 허용값. 예: 0.08 = +8%% 초과 시 cash slot")
     p.add_argument("--entry-penalty-bps", type=float, default=0.0, help="next_open 진입 보수성 페널티 bps. 수익률에서 추가 차감")
+    p.add_argument("--adverse-sector-skip", default="", help="실험용 adverse-risk sector_etf skip 목록. 예: NLR 또는 NLR,XLK")
+    p.add_argument("--adverse-regime-skip", default="", help="실험용 adverse-risk regime skip 목록. 예: 'Bear Trend'")
+    p.add_argument("--adverse-conditional-sector-skip", default="", help="Experimental conditional sector_etf skip list")
+    p.add_argument("--adverse-conditional-regime-skip", default="", help="Regime list for conditional sector skip")
+    p.add_argument("--adverse-conditional-max-rank-score", type=float, default=None, help="Max final_rank_score for conditional sector skip")
+    p.add_argument("--adverse-min-sector-return-5d", type=float, default=None, help="Skip active slot when sector_return_5d is at or above this threshold")
+    p.add_argument("--adverse-min-market-score", type=float, default=None, help="Skip active slot when market_score is at or above this threshold")
     p.add_argument("--resume-dir", default=None, help="partial CSV가 있는 benchmark 디렉터리에서 이어서 실행")
     p.add_argument("--train-test", action="store_true", help="v2.0 Purged Train/Test Validation 실행")
     p.add_argument("--train-start", default=None, help="Train 시작일 YYYY-MM-DD")
@@ -2222,6 +2540,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-end", default=None, help="Test 종료일 YYYY-MM-DD")
     p.add_argument("--embargo-trading-days", type=int, default=10, help="Train end 이후 제외할 거래일 수")
     p.add_argument("--train-top-k-rules", type=int, default=5, help="Train grid 상위 K개 룰을 Test에 고정 평가")
+    p.add_argument("--historical-rule-prior-limit", type=int, default=0, help="최근 OOS에서 덜 나빴던 TP/SL/Hold 룰을 추가 평가할 개수")
+    p.add_argument("--historical-rule-prior-lookback", type=int, default=50, help="historical rule prior 검색 후보 디렉터리 수. 0이면 전체")
+    p.add_argument("--historical-rule-prior-root", default="models/candidates", help="historical rule prior 검색 루트")
     p.set_defaults(
         top_n=5,
         top_list="5,10",
@@ -2278,6 +2599,16 @@ def main() -> None:
         train_top_k_rules=args.train_top_k_rules,
         rank_mode=args.rank_mode,
         xgb_blend_weights=_parse_xgb_blend_weights(args.xgb_blend_weight),
+        historical_rule_prior_limit=args.historical_rule_prior_limit,
+        historical_rule_prior_lookback=args.historical_rule_prior_lookback,
+        historical_rule_prior_root=args.historical_rule_prior_root,
+        adverse_sector_skip=_parse_csv_list(args.adverse_sector_skip),
+        adverse_regime_skip=_parse_csv_list(args.adverse_regime_skip),
+        adverse_conditional_sector_skip=_parse_csv_list(args.adverse_conditional_sector_skip),
+        adverse_conditional_regime_skip=_parse_csv_list(args.adverse_conditional_regime_skip),
+        adverse_conditional_max_rank_score=args.adverse_conditional_max_rank_score,
+        adverse_min_sector_return_5d=args.adverse_min_sector_return_5d,
+        adverse_min_market_score=args.adverse_min_market_score,
     )
     if bench.train_test:
         run_train_test_validation(app_config, bench)

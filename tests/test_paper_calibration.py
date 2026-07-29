@@ -1,5 +1,6 @@
 """Network-free calibration report tests."""
 import csv
+import math
 from pathlib import Path
 
 from scripts.phoenix_paper_calibration import audit
@@ -28,6 +29,8 @@ def test_calibration_reports_all_required_comparisons(tmp_path: Path):
     assert result["status"] == "CALIBRATION_READY"
     assert result["parameter_retuning_allowed"] is False
     assert result["coverage"]["predicted_return"] == 1
+    assert result["coverage"]["paired_prediction_realized"] == 1
+    assert math.isclose(result["means"]["prediction_error_mae"], 0.002)
     assert result["means"]["realized_net_return"] < result["means"]["realized_gross_return"]
 
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Optional
@@ -50,6 +52,7 @@ def audit(
     gross_returns: list[float] = []
     net_returns: list[float] = []
     actual_slippage: list[float] = []
+    paired_prediction_errors: list[float] = []
     invalid_realized_returns = 0
     roundtrip_cost = 2.0 * (commission_bps + estimated_slippage_bps) / 10_000.0
     for row in rows:
@@ -62,17 +65,20 @@ def audit(
             if abs(gross) <= 1.0:
                 gross_returns.append(gross)
                 net_returns.append(gross - roundtrip_cost)
+                if predicted is not None:
+                    paired_prediction_errors.append(predicted - gross)
             else:
                 invalid_realized_returns += 1
         if actual is not None:
             actual_slippage.append(actual)
-    complete = bool(predictions and gross_returns and actual_slippage)
+    complete = bool(paired_prediction_errors and actual_slippage)
     return {
         "status": "CALIBRATION_READY" if complete else "CALIBRATION_INCOMPLETE",
         "parameter_retuning_allowed": False,
         "rows": len(rows),
         "coverage": {
             "predicted_return": len(predictions),
+            "paired_prediction_realized": len(paired_prediction_errors),
             "realized_gross_return": len(gross_returns),
             "realized_net_return": len(net_returns),
             "actual_or_paper_fill_slippage": len(actual_slippage),
@@ -84,17 +90,33 @@ def audit(
             "realized_net_return": _average(net_returns),
             "estimated_one_way_slippage_bps": estimated_slippage_bps,
             "actual_or_paper_fill_slippage_bps": _average(actual_slippage),
+            "prediction_error_bias": _average(paired_prediction_errors),
+            "prediction_error_mae": (
+                _average([abs(value) for value in paired_prediction_errors])
+            ),
         },
         "roundtrip_cost_fraction": roundtrip_cost,
         "blocking_reasons": [
             name
             for name, count in {
                 "predicted_return_missing": len(predictions),
+                "paired_prediction_realized_missing": len(
+                    paired_prediction_errors
+                ),
                 "realized_return_missing": len(gross_returns),
                 "actual_or_paper_fill_slippage_missing": len(actual_slippage),
             }.items()
             if count == 0
         ],
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z"),
+        "source_artifact": str(path),
+        "source_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        "broker_routes_called": False,
+        "account_endpoints_called": False,
+        "live_enabled": False,
+        "parameter_changes_applied": False,
     }
 
 
@@ -103,6 +125,7 @@ def main() -> None:
     parser.add_argument("--path", default="data/intraday_features.csv")
     parser.add_argument("--commission-bps", type=float, default=2.0)
     parser.add_argument("--estimated-slippage-bps", type=float, default=5.0)
+    parser.add_argument("--output-json")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     result = audit(
@@ -110,6 +133,13 @@ def main() -> None:
         commission_bps=args.commission_bps,
         estimated_slippage_bps=args.estimated_slippage_bps,
     )
+    if args.output_json:
+        output = Path(args.output_json)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(result, ensure_ascii=False) if args.json else result)
 
 

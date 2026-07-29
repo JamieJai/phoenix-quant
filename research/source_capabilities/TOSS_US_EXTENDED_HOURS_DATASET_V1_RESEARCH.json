@@ -1,0 +1,30 @@
+{
+  "status": "FROZEN_OPERATIONAL_CAPABILITY_EXCEPTION",
+  "source": "TOSS_US",
+  "dataset": "TOSS_US_EXTENDED_HOURS_DATASET_V1_RESEARCH",
+  "scope": "RESEARCH_DATASET_ONLY",
+  "created_at_utc": "2026-07-29T01:40:31Z",
+  "terminal_unavailable_symbols": [
+    {
+      "ticker": "^VIX",
+      "reason_code": "TOSS_CANDLE_SYMBOL_UNSUPPORTED",
+      "reason_detail": "Toss research candle endpoint returned repeatable HTTP 400 for distinct historical dates while supported equity and ETF symbols continued to collect successfully.",
+      "evidence": {
+        "http_status": 400,
+        "distinct_market_dates_observed": 5,
+        "repeated_batches_observed": true,
+        "last_observed_at_utc": "2026-07-29T01:26:36Z"
+      },
+      "allowed_action": "WRITE_TERMINAL_MISSING_MANIFEST",
+      "imputation_allowed": false,
+      "alternative_source_mixing_allowed": false,
+      "eligible_for_signal": false
+    }
+  ],
+  "plan_mutated": false,
+  "production_connected": false,
+  "champion_connected": false,
+  "paper_or_live_connected": false,
+  "order_or_account_endpoints_allowed": false,
+  "credential_values_persisted": false
+}

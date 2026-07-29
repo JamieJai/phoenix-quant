@@ -41,6 +41,97 @@ Common categories:
 - `alpha`: candidate is not beating baseline enough. Study feature quality before adding complexity.
 - `active_trades` or `sample_size`: evidence is too sparse. Do not promote low-sample candidates.
 
+
+## Pausing Scheduled Auto-Cycle
+
+Before long manual OOS experiments, pause scheduled auto-cycle jobs so they do not compete for CPU or create low-confidence candidates from known-bad windows. Either set this in the host-local env:
+
+```bash
+PHOENIX_AUTO_CYCLE_DISABLED=1
+```
+
+or create the pause file configured by `PHOENIX_PAUSE_FILE`:
+
+```bash
+touch .phoenix_auto_cycle.pause
+```
+
+Remove the file or set the flag back to `0` to resume future scheduled cycles. Already-running root-owned jobs may still need to finish or be stopped by an operator with sufficient privileges.
+
+## Data Coverage Audit
+
+Before interpreting weak OOS results, check whether the cached OHLCV data actually covers each train/test window:
+
+```bash
+.venv/bin/python scripts/phoenix_data_coverage_audit.py --include-etfs \
+  --split split_2024:2022-01-03,2023-12-15,2024-01-08,2024-12-20 \
+  --split split_2025_2026:2023-01-01,2024-12-20,2025-01-16,2026-07-06
+```
+
+The audit writes `ticker_coverage.csv`, `split_coverage.csv`, and `summary.json` under `reports/data_coverage/`. If train coverage is weak, refresh data first and then re-run the audit:
+
+```bash
+.venv/bin/python scripts/fetch_daily_data.py --period 5y --refresh --manifest data/daily_data_manifest.csv
+```
+
+Do not trust a rolling split whose train phase has too few usable tickers; it may be measuring data availability rather than model quality.
+
+
+## Adverse-Risk Post-Filter Experiment
+
+Use this only as an explicit OOS experiment; leave it empty for baseline behavior. The 2026-07-12 diagnostics found `NLR,XLK` sector skips materially improved the adjusted 2025-2026 weekly OOS result, but with high cash weight. Treat it as a challenger, not a promoted operating default:
+
+```bash
+.venv/bin/python benchmark.py \
+  --config config/config.yaml \
+  --train-test \
+  --train-start 2023-07-11 \
+  --train-end 2024-12-20 \
+  --test-start 2025-01-16 \
+  --test-end 2026-07-06 \
+  --top-n 5 \
+  --period 5y \
+  --frequency weekly \
+  --random-baseline 1000 \
+  --bootstrap 1000 \
+  --train-top-k-rules 5 \
+  --historical-rule-prior-limit 5 \
+  --historical-rule-prior-lookback 50 \
+  --historical-rule-prior-root models/candidates \
+  --rank-mode decision \
+  --xgb-blend-weight 0.0 \
+  --trade-sim \
+  --min-dollar-volume 10000000 \
+  --min-price 5 \
+  --max-gap-open 0.08 \
+  --entry-penalty-bps 20 \
+  --adverse-sector-skip NLR,XLK
+```
+
+Latest controlled result:
+
+- `reports/benchmark_train_test_20260712_144040` used adjusted weekly split `2023-07-11..2024-12-20` -> `2025-01-16..2026-07-06` with `--adverse-sector-skip NLR,XLK`.
+- Best OOS rule: historical prior TP 6%, SL 4%, Hold 7D.
+- OOS portfolio mean: `0.392%`, random mean: `0.113%`, alpha: `0.279%`, p-value: `0.042`, MDD: `7.26%`, active trades: `243/380`.
+- A later conditional score filter run (`--adverse-conditional-sector-skip NLR,XLK --adverse-conditional-max-rank-score 82`) improved 2025-2026 test trade results, but train-side alpha remained slightly negative.
+
+For auto-cycle trials, keep these env vars empty by default. If explicitly testing this challenger, set `PHOENIX_ADVERSE_SECTOR_SKIP=NLR,XLK` in the host-local `config/phoenix_auto_cycle.env` and require rolling OOS before promotion.
+
+
+## Rule Candidate Memory
+
+The auto cycle evaluates the latest train-grid rules plus a small set of recent historical OOS rule priors. This keeps comparatively better TP/SL/Hold combinations, such as a rule that was less bad in a prior 2025-2026 split, in the challenger pool instead of repeatedly forgetting them when the latest train-only grid changes.
+
+Relevant env settings:
+
+```bash
+PHOENIX_HISTORICAL_RULE_PRIOR_LIMIT=5
+PHOENIX_HISTORICAL_RULE_PRIOR_LOOKBACK=50
+PHOENIX_HISTORICAL_RULE_PRIOR_ROOT=models/candidates
+```
+
+This does not weaken promotion gates. Candidates still need alpha, p-value, leakage audit, and rolling OOS checks to pass before promotion.
+
 ## Feedback Capture
 
 Use `scripts/phoenix_add_feedback.py` to append structured feedback without editing CSV by hand:
@@ -85,6 +176,25 @@ Summarize feedback:
 ```bash
 ./scripts/phoenix_feedback_summary.py --feedback-csv data/operator_feedback.csv
 ```
+
+Fill empty feedback forward returns from cached daily OHLCV data:
+
+```bash
+.venv/bin/python scripts/phoenix_update_feedback_returns.py \
+  --feedback-csv data/operator_feedback.csv \
+  --cache-dir data
+```
+
+For unattended collection while auto-learning is paused, install the dedicated user timer:
+
+```bash
+cp systemd/phoenix-feedback-return-cycle.service ~/.config/systemd/user/
+cp systemd/phoenix-feedback-return-cycle.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now phoenix-feedback-return-cycle.timer
+```
+
+This timer runs `scripts/phoenix_feedback_return_cycle.sh` daily after the US close should be available in Korea time. It refreshes daily OHLCV with `scripts/fetch_daily_data.py --refresh`, then fills feedback returns and prints a feedback summary. It is separate from `phoenix-auto-cycle.timer`, so creating `.phoenix_auto_cycle.pause` stops model validation/promotion but does not stop daily feedback-return upkeep.
 
 ## Promotion Policy
 

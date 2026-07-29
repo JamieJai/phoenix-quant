@@ -51,6 +51,7 @@ promotion_gates:
   live_review:
     min_mature_trades: 500
     min_days: 60
+    min_calibrated_predictions: 100
     require_manual_signoff: true
     require_kill_switch_test: true
     require_cost_and_slippage_audit: true

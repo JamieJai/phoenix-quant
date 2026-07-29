@@ -16,6 +16,16 @@ from ..pipeline import analyze_ticker_quiet, build_trade_plan
 from ..registry import EngineRegistry
 
 
+def _label_from_score(score: float) -> str:
+    if score >= 60:
+        return "관심"
+    if score >= 45:
+        return "관찰"
+    if score >= 30:
+        return "보류"
+    return "제외"
+
+
 @EngineRegistry.register("ranking_engine", "ranking_v1")
 class RankingEngine(Engine[RankingInput, RankingResult]):
     """Universe 전체를 분석해 상위 종목을 반환한다.
@@ -98,14 +108,25 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
             reasons.append("final 낮음")
         return " / ".join(reasons[:5]) if reasons else "중립"
 
+    def _display_label(self, decision, final_rank_score: float) -> str:
+        """Ranking is sorted by final score, so the visible label must use it too."""
+        label = _label_from_score(final_rank_score)
+        market_score = float(decision.sub_scores.get("market_score", 0.0))
+        hit5 = float(getattr(decision, "success_rate_5d", 0.0))
+        if label == "제외" and decision.confidence_score >= 85 and hit5 >= 0.55 and market_score >= 45:
+            return "보류"
+        return label
+
     def run(self, input_data: RankingInput) -> RankingResult:
         items: list[RankingItem] = []
         xgb_model = None
-        try:
-            xgb_model = self._fit_xgb_model((input_data.prebuilt or {}).get("records", []))
-        except Exception as exc:  # noqa: BLE001
-            if input_data.verbose:
-                print(f"[rank warn] xgb disabled: {exc}")
+        xgb_blend_weight = float(np.clip(getattr(input_data, "xgb_blend_weight", 0.30), 0.0, 1.0))
+        if xgb_blend_weight > 0.0:
+            try:
+                xgb_model = self._fit_xgb_model((input_data.prebuilt or {}).get("records", []))
+            except Exception as exc:  # noqa: BLE001
+                if input_data.verbose:
+                    print(f"[rank warn] xgb disabled: {exc}")
         for ticker in input_data.universe:
             try:
                 decision, meta = analyze_ticker_quiet(
@@ -122,7 +143,6 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                 feature_engine = (input_data.prebuilt or {}).get("feature_engine")
                 feature_vector = feature_engine.run(FeatureEngineInput(ticker=ticker, ohlcv=input_data.raw_data[ticker], as_of=decision.as_of))
                 xgb_score = self._xgb_score(xgb_model, feature_vector.values)
-                xgb_blend_weight = float(np.clip(getattr(input_data, "xgb_blend_weight", 0.30), 0.0, 1.0))
                 final_rank_score = float(decision.suitability_score)
                 if np.isfinite(xgb_score):
                     final_rank_score = (1.0 - xgb_blend_weight) * final_rank_score + xgb_blend_weight * (xgb_score * 100.0)
@@ -132,7 +152,7 @@ class RankingEngine(Engine[RankingInput, RankingResult]):
                     suitability_score=decision.suitability_score,
                     confidence_score=decision.confidence_score,
                     risk_score=decision.risk_score,
-                    label=decision.label,
+                    label=self._display_label(decision, final_rank_score),
                     market_score=decision.sub_scores.get("market_score", 0.0),
                     sector_score=decision.sub_scores.get("sector_rotation_score", decision.sub_scores.get("market_score", 0.0)),
                     pattern_rarity=decision.sub_scores.get("anomaly_percentile", 0.0),

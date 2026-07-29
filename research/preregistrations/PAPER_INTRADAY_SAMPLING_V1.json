@@ -1,0 +1,48 @@
+{
+  "hypothesis_id": "PAPER_INTRADAY_SAMPLING_V1",
+  "status": "FROZEN_PROSPECTIVE_COLLECTION",
+  "scope": "PAPER_SHADOW_DATA_COLLECTION_ONLY",
+  "frozen_at_utc": "2026-07-29T02:02:00Z",
+  "selection": {
+    "source": "21:00 KST frozen Phoenix daily candidate output",
+    "maximum_tickers": 5,
+    "same_day_reselection_allowed": false,
+    "immutable_snapshot_required": true
+  },
+  "sampling_schedule": {
+    "timezone": "America/New_York",
+    "weekdays": "Monday-Friday",
+    "times": [
+      "08:15",
+      "09:20",
+      "10:30",
+      "12:30",
+      "14:30",
+      "15:30"
+    ]
+  },
+  "timestamp_contract": {
+    "timestamp_source": "latest underlying intraday bar timestamp",
+    "timezone_aware_required": true,
+    "maximum_bar_age_seconds": 1800,
+    "future_bar_tolerance_seconds": 60,
+    "stale_or_future_rows": "REJECT"
+  },
+  "source": {
+    "market_data": "YFINANCE_INTRADAY",
+    "source_mixing_with_toss": false,
+    "toss_role": "SEPARATE_RESEARCH_DATASET"
+  },
+  "outcome": {
+    "forward_return_5m": "filled only after horizon matures",
+    "forward_return_10m": "filled only after horizon matures",
+    "lookahead_allowed": false
+  },
+  "safety": {
+    "production_score_changed": false,
+    "champion_changed": false,
+    "telegram_message_changed": false,
+    "broker_route_allowed": false,
+    "live_enable_allowed": false
+  }
+}

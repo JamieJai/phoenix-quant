@@ -1,0 +1,11 @@
+[Unit]
+Description=Phoenix Quant daily data refresh and feedback return update
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/sysadmin/phoenix_ai_core_mvp
+EnvironmentFile=-/home/sysadmin/phoenix_ai_core_mvp/config/phoenix_auto_cycle.env
+ExecStart=/home/sysadmin/phoenix_ai_core_mvp/scripts/phoenix_feedback_return_cycle.sh
+Nice=10

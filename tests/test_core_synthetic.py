@@ -40,6 +40,7 @@ from phoenix_core.registry import EngineRegistry
 from phoenix_core.trade import EntryMode, TradeConfig, TradeSimulationEngine
 from phoenix_core.services import telegram_command_bot as telegram_bot_module
 from phoenix_core.services.telegram_command_bot import PhoenixTelegramBot
+from benchmark import _adverse_filter_info, _parse_csv_list
 
 
 def make_synthetic_ohlcv(n=420, seed=0, drift=0.0004, vol=0.02, start_price=50.0):
@@ -99,6 +100,35 @@ def main():
     )
     assert np.isclose(ci_low, 0.01) and np.isclose(ci_high, 0.01)
     print("statistical validation zero-bootstrap fallback ok")
+
+    assert _parse_csv_list(" NLR, XLK, NLR ,, ") == ["NLR", "XLK"]
+    hard_sector = _adverse_filter_info({"sector_etf": "nlr", "regime": "Risk Off", "final_rank_score": 99}, adverse_sector_skip=["NLR"])
+    assert hard_sector is not None and hard_sector["filter_reason"] == "filtered_by_adverse_sector"
+    assert hard_sector["adverse_filter_value"] == "NLR"
+    hard_regime = _adverse_filter_info({"sector_etf": "SOXX", "regime": "Bear Trend", "final_rank_score": 99}, adverse_regime_skip=["bear trend"])
+    assert hard_regime is not None and hard_regime["filter_reason"] == "filtered_by_adverse_regime"
+    conditional_low_score = _adverse_filter_info(
+        {"sector_etf": "XLK", "regime": "Risk Off", "final_rank_score": 82.0},
+        adverse_conditional_sector_skip=["NLR", "XLK"],
+        adverse_conditional_max_rank_score=82.0,
+    )
+    assert conditional_low_score is not None
+    assert conditional_low_score["filter_reason"] == "filtered_by_adverse_conditional_sector"
+    assert "final_rank_score<=82" in conditional_low_score["adverse_filter_value"]
+    conditional_high_score = _adverse_filter_info(
+        {"sector_etf": "XLK", "regime": "Risk Off", "final_rank_score": 82.1},
+        adverse_conditional_sector_skip=["NLR", "XLK"],
+        adverse_conditional_max_rank_score=82.0,
+    )
+    assert conditional_high_score is None
+    conditional_regime = _adverse_filter_info(
+        {"sector_etf": "NLR", "regime": "Neutral / Mixed", "final_rank_score": 95.0},
+        adverse_conditional_sector_skip=["NLR", "XLK"],
+        adverse_conditional_regime_skip=["neutral / mixed"],
+    )
+    assert conditional_regime is not None
+    assert "regime=Neutral / Mixed" in conditional_regime["adverse_filter_value"]
+    print("benchmark adverse post-filter helpers ok")
 
     # Leakage check: 미래 구간을 바꿔도 과거 시점 feature가 변하지 않아야 함.
     df_a = raw[target].copy()
@@ -344,6 +374,15 @@ Rank | Ticker | Final | XGB | Suitability | Confidence | Risk | Market | Entry |
     compact_xgb_rank = compact_ranking_output(xgb_ranking_text, max_rows=2)
     assert "final" in compact_xgb_rank and "xgb" in compact_xgb_rank and "NVDA" in compact_xgb_rank
 
+    ranking_engine = EngineRegistry.get("ranking_engine", "ranking_v1")
+    fake_decision = type("FakeDecision", (), {
+        "confidence_score": 91.0,
+        "success_rate_5d": 0.60,
+        "sub_scores": {"market_score": 48.8},
+    })()
+    assert ranking_engine._display_label(fake_decision, 38.3) == "보류"
+    assert ranking_engine._display_label(fake_decision, 45.3) == "관찰"
+
     noisy_ranking_text = """Phoenix Quant v2.1.1 Ranking
 ━━━━━━━━━━━━━━━━━━━━
 기준일: 2026-07-08
@@ -475,6 +514,19 @@ Top Similar Cases:
         hot_resp = make_bot(50)._cmd_hot(["2"], "chat", fake_profile)
         assert "장중 관심 후보" in hot_resp
         assert "AMD" in hot_resp and "NVDA" not in hot_resp
+
+        hot_bot = make_bot(50)
+        vwap_missing_hot = replace(
+            strong_second,
+            ticker="MU",
+            current_vs_prev_close_pct=7.64,
+            latest_10m_return_pct=0.21,
+            latest_30m_return_pct=None,
+            above_vwap=None,
+            intraday_score=50,
+            intraday_risk_score=25,
+        )
+        assert hot_bot._is_hot_context(vwap_missing_hot)
     finally:
         telegram_bot_module.send_chat_action_with_token = old_chat_action
 

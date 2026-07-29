@@ -76,8 +76,19 @@ def _last_close(df):
     return _f(s.iloc[-1]) if len(s) else None
 
 class IntradayContextEngine:
-    def __init__(self, intraday_period='5d', interval_10m='10m', interval_30m='30m', include_prepost=True):
-        self.intraday_period=intraday_period; self.interval_10m=interval_10m; self.interval_30m=interval_30m; self.include_prepost=include_prepost
+    def __init__(
+        self,
+        intraday_period='5d',
+        interval_10m='10m',
+        interval_30m='30m',
+        include_prepost=True,
+        completed_bars_only=False,
+    ):
+        self.intraday_period=intraday_period
+        self.interval_10m=interval_10m
+        self.interval_30m=interval_30m
+        self.include_prepost=include_prepost
+        self.completed_bars_only=completed_bars_only
     def analyze_many(self,tickers:list[str])->list[IntradayContext]:
         return [self.analyze(t) for t in tickers]
     def analyze(self,ticker:str)->IntradayContext:
@@ -95,9 +106,24 @@ class IntradayContextEngine:
                 sector_frames={s: _flat(yf.download(s, period=self.intraday_period, interval=self.interval_10m, prepost=self.include_prepost, auto_adjust=False, progress=False, threads=False)) for s in ('SOXX', 'SMH', 'QQQ')}
         except Exception as e:
             return self._err(ticker,'DATA_ERROR',[f'yfinance download 실패: {type(e).__name__}: {e}'])
+        if self.completed_bars_only:
+            now = pd.Timestamp.now(tz="UTC")
+            df10 = self._completed_bars(df10, self.interval_10m, now)
+            df30 = self._completed_bars(df30, self.interval_30m, now)
+            sector_frames = {
+                symbol: self._completed_bars(
+                    frame,
+                    self.interval_10m,
+                    now,
+                )
+                for symbol, frame in sector_frames.items()
+            }
         if df10.empty and df30.empty and dfd.empty:
             return self._err(ticker,'NO_DATA',['intraday/daily 데이터를 가져오지 못했습니다.'])
-        cur=_last_close(df10) or _last_close(df30) or _last_close(dfd)
+        cur10=_last_close(df10)
+        cur30=_last_close(df30)
+        cur_daily=_last_close(dfd)
+        cur=cur10 if cur10 is not None else cur30 if cur30 is not None else cur_daily
         prev=self._previous_close(dfd)
         gap=_pct(cur,prev)
         day10=self._latest_session(df10); day30=self._latest_session(df30)
@@ -134,7 +160,20 @@ class IntradayContextEngine:
             momentum_acceleration_pct=acceleration,
             chase_penalty_score=chase_penalty,
         )
-        return IntradayContext(ticker,datetime.now(timezone.utc).isoformat(timespec='seconds'),'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes,features)
+        # The timestamp must describe the bar that supplied ``current_price``.
+        # Taking the maximum across intervals can let a conservatively dated
+        # daily bar mask the actual intraday availability time.
+        if cur10 is not None:
+            data_timestamp = self._latest_data_timestamp(
+                (df10, self.interval_10m)
+            )
+        elif cur30 is not None:
+            data_timestamp = self._latest_data_timestamp(
+                (df30, self.interval_30m)
+            )
+        else:
+            data_timestamp = self._latest_data_timestamp((dfd, "1d"))
+        return IntradayContext(ticker,data_timestamp,'yfinance',cur,prev,gap,day_open,intraday_ret,r10,r30,today_vol,avg_vol,vol_ratio,vwap,vwap_pos,above,high,pull,score,risk,label,notes,features)
     def _relative_strength(self, ticker_return, benchmark_df):
         benchmark_return = self._lookback(benchmark_df, 1)
         if ticker_return is None or benchmark_return is None: return None
@@ -173,6 +212,37 @@ class IntradayContextEngine:
         s=pd.to_numeric(df['Close'],errors='coerce').dropna()
         if len(s)<=bars: return None
         return _pct(_f(s.iloc[-1]), _f(s.iloc[-1-bars]))
+    def _latest_data_timestamp(self,*frame_intervals):
+        timestamps=[]
+        for item in frame_intervals:
+            if isinstance(item, tuple):
+                df, interval = item
+            else:
+                df, interval = item, "0m"
+            if df is None or df.empty:
+                continue
+            idx=pd.to_datetime(df.index,errors='coerce',utc=True)
+            idx=idx[~pd.isna(idx)]
+            if len(idx):
+                try:
+                    available_at=idx.max()+pd.Timedelta(str(interval))
+                except ValueError:
+                    available_at=idx.max()
+                timestamps.append(available_at)
+        if not timestamps:
+            return datetime.now(timezone.utc).isoformat(timespec='seconds')
+        latest=max(timestamps)
+        return latest.to_pydatetime().astimezone(timezone.utc).isoformat(timespec='seconds')
+    def _completed_bars(self,df,interval,as_of):
+        if df is None or df.empty:
+            return pd.DataFrame() if df is None else df
+        idx=pd.to_datetime(df.index,errors='coerce',utc=True)
+        try:
+            available=idx+pd.Timedelta(str(interval))
+        except ValueError:
+            return df
+        valid=(~pd.isna(idx))&(available<=pd.Timestamp(as_of))
+        return df.loc[valid].copy()
     def _volume(self,df):
         if df is None or df.empty or 'Volume' not in df.columns: return None,None,None
         out=df.copy(); out['Volume']=pd.to_numeric(out['Volume'],errors='coerce').fillna(0.0); out['_date']=pd.to_datetime(out.index).date

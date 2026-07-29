@@ -32,6 +32,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--random-baseline", type=int, default=1000)
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--train-top-k-rules", type=int, default=5)
+    parser.add_argument("--historical-rule-prior-limit", type=int, default=0)
+    parser.add_argument("--historical-rule-prior-lookback", type=int, default=50)
+    parser.add_argument("--historical-rule-prior-root", default="models/candidates")
     parser.add_argument("--rank-mode", default="decision", choices=["decision", "ranking", "both"])
     parser.add_argument("--xgb-blend-weight", default="0.0")
     parser.add_argument("--embargo-trading-days", type=int, default=10)
@@ -39,6 +42,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-price", type=float, default=5.0)
     parser.add_argument("--max-gap-open", type=float, default=0.08)
     parser.add_argument("--entry-penalty-bps", type=float, default=20.0)
+    parser.add_argument("--take-profit", type=float, default=0.05)
+    parser.add_argument("--stop-loss", type=float, default=0.03)
+    parser.add_argument("--hold-days", type=int, default=5)
+    parser.add_argument("--tp-list", default=None)
+    parser.add_argument("--sl-list", default=None)
+    parser.add_argument("--hold-list", default=None)
+    parser.add_argument("--adverse-sector-skip", default="")
+    parser.add_argument("--adverse-regime-skip", default="")
+    parser.add_argument("--adverse-conditional-sector-skip", default="")
+    parser.add_argument("--adverse-conditional-regime-skip", default="")
+    parser.add_argument("--adverse-conditional-max-rank-score", type=float, default=None)
+    parser.add_argument("--adverse-min-sector-return-5d", type=float, default=None)
+    parser.add_argument("--adverse-min-market-score", type=float, default=None)
     parser.add_argument("--max-dates", type=int, default=None)
     parser.add_argument("--min-sample-size", type=int, default=50)
     parser.add_argument("--min-active-trades", type=int, default=30)
@@ -169,6 +185,9 @@ def _run_split(split: dict[str, str], split_dir: Path, args: argparse.Namespace,
         "--random-baseline", str(args.random_baseline),
         "--bootstrap", str(args.bootstrap),
         "--train-top-k-rules", str(args.train_top_k_rules),
+        "--historical-rule-prior-limit", str(args.historical_rule_prior_limit),
+        "--historical-rule-prior-lookback", str(args.historical_rule_prior_lookback),
+        "--historical-rule-prior-root", args.historical_rule_prior_root,
         "--rank-mode", args.rank_mode,
         "--xgb-blend-weight", args.xgb_blend_weight,
         "--embargo-trading-days", str(args.embargo_trading_days),
@@ -177,7 +196,31 @@ def _run_split(split: dict[str, str], split_dir: Path, args: argparse.Namespace,
         "--min-price", str(args.min_price),
         "--max-gap-open", str(args.max_gap_open),
         "--entry-penalty-bps", str(args.entry_penalty_bps),
+        "--take-profit", str(args.take_profit),
+        "--stop-loss", str(args.stop_loss),
+        "--hold-days", str(args.hold_days),
     ]
+    if args.tp_list:
+        cmd.extend(["--tp-list", args.tp_list])
+    if args.sl_list:
+        cmd.extend(["--sl-list", args.sl_list])
+    if args.hold_list:
+        cmd.extend(["--hold-list", args.hold_list])
+
+    if args.adverse_sector_skip:
+        cmd.extend(["--adverse-sector-skip", args.adverse_sector_skip])
+    if args.adverse_regime_skip:
+        cmd.extend(["--adverse-regime-skip", args.adverse_regime_skip])
+    if args.adverse_conditional_sector_skip:
+        cmd.extend(["--adverse-conditional-sector-skip", args.adverse_conditional_sector_skip])
+    if args.adverse_conditional_regime_skip:
+        cmd.extend(["--adverse-conditional-regime-skip", args.adverse_conditional_regime_skip])
+    if args.adverse_conditional_max_rank_score is not None:
+        cmd.extend(["--adverse-conditional-max-rank-score", str(args.adverse_conditional_max_rank_score)])
+    if args.adverse_min_sector_return_5d is not None:
+        cmd.extend(["--adverse-min-sector-return-5d", str(args.adverse_min_sector_return_5d)])
+    if args.adverse_min_market_score is not None:
+        cmd.extend(["--adverse-min-market-score", str(args.adverse_min_market_score)])
     if args.max_dates is not None:
         cmd.extend(["--max-dates", str(args.max_dates)])
 

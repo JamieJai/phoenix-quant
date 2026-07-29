@@ -1,0 +1,41 @@
+{
+  "hypothesis_id": "PAPER_FORWARD_LABEL_V2",
+  "status": "FROZEN_PROSPECTIVE_LABEL_CONTRACT",
+  "scope": "PAPER_SHADOW_OUTCOME_LABELS_ONLY",
+  "frozen_at_utc": "2026-07-29T02:06:00Z",
+  "prospective_market_date_start": "2026-07-29",
+  "source_contract": {
+    "signal_price_source": "YFINANCE_INTRADAY",
+    "outcome_price_source": "YFINANCE_INTRADAY",
+    "source_mixing_allowed": false,
+    "bar_interval": "5m",
+    "extended_hours": true
+  },
+  "timestamp_contract": {
+    "raw_bar_timestamp": "bar_start",
+    "bar_available_at": "bar_start + 5 minutes",
+    "signal_timestamp": "signal input bar_available_at",
+    "five_minute_target": "signal timestamp + 5 minutes",
+    "ten_minute_target": "signal timestamp + 10 minutes",
+    "execution_or_label_before_available_at": false
+  },
+  "label_formula": {
+    "forward_return_5m": "first eligible 5m bar close available at or after five_minute_target / signal_price - 1",
+    "forward_return_10m": "first eligible 5m bar close available at or after ten_minute_target / signal_price - 1",
+    "maximum_target_delay_minutes": 10,
+    "outcome": "1 if forward return > 0 else 0"
+  },
+  "missing_policy": {
+    "imputation": "NONE",
+    "no_eligible_bar": "LEAVE_NULL",
+    "stale_or_naive_signal_timestamp": "LEAVE_NULL",
+    "overwrite_existing_label": false
+  },
+  "safety": {
+    "production_score_changed": false,
+    "champion_changed": false,
+    "paper_signal_changed": false,
+    "broker_route_allowed": false,
+    "live_enable_allowed": false
+  }
+}

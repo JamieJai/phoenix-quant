@@ -11,16 +11,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.phoenix_paper_signal_runner import _dt, _float
+from scripts.phoenix_paper_signal_runner import _dt, _float, paper_config
 from phoenix_core.trade.paper_engine import PaperEngineConfig, PaperSignal, PaperTradingEngine, OrderSide
 
 
 def run(path: str = "data/intraday_features.csv", *, fee_bps: float = 2.0,
         slippage_bps: float = 5.0, min_confidence: float = 50.0,
-        min_rr: float = 1.2, max_age: int = 300, limit: int = 0) -> dict:
-    cfg = PaperEngineConfig(fee_bps=fee_bps, slippage_bps=slippage_bps,
-                            min_confidence=min_confidence, min_rr_ratio=min_rr,
-                            max_data_age_seconds=max_age)
+        min_rr: float = 1.2, max_age: int | None = None, limit: int = 0,
+        config_path: str = "config/paper_trading.yaml") -> dict:
+    cfg = paper_config(
+        config_path,
+        equity=100_000.0,
+        max_age_override=max_age,
+    )
+    # Explicit non-default function arguments remain available for bounded
+    # synthetic callers; normal operations use the YAML contract above.
+    if (fee_bps, slippage_bps, min_confidence, min_rr) != (2.0, 5.0, 50.0, 1.2):
+        cfg.fee_bps = fee_bps
+        cfg.slippage_bps = slippage_bps
+        cfg.min_confidence = min_confidence
+        cfg.min_rr_ratio = min_rr
     engine = PaperTradingEngine(cfg)
     with Path(path).open(newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
@@ -29,7 +39,7 @@ def run(path: str = "data/intraday_features.csv", *, fee_bps: float = 2.0,
     accepted = rejected = 0
     mature = []
     reject_reasons: dict[str, int] = {}
-    roundtrip_cost = 2.0 * (fee_bps + slippage_bps) / 10_000.0
+    roundtrip_cost = 2.0 * (cfg.fee_bps + cfg.slippage_bps) / 10_000.0
     for row in rows:
         ts = _dt(row.get("timestamp") or row.get("recorded_at"))
         price = _float(row, "current_price", "close")
@@ -75,8 +85,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--path", default="data/intraday_features.csv"); ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--fee-bps", type=float, default=2.0); ap.add_argument("--slippage-bps", type=float, default=5.0)
+    ap.add_argument("--config", default="config/paper_trading.yaml")
     ap.add_argument("--json", action="store_true"); args = ap.parse_args()
-    out = run(args.path, fee_bps=args.fee_bps, slippage_bps=args.slippage_bps, limit=args.limit)
+    out = run(
+        args.path,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
+        limit=args.limit,
+        config_path=args.config,
+    )
     print(json.dumps(out, ensure_ascii=False) if args.json else f"{out['status']} accepted={out['accepted']} 5m={out['5m']['mature']}")
 
 if __name__ == "__main__": main()

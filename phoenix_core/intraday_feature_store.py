@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import fcntl
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,20 +51,113 @@ def intraday_context_to_feature_row(ctx: Any, recorded_at: str | None = None) ->
     return row
 
 
-def append_intraday_feature_rows(contexts: Iterable[Any], path: str | os.PathLike[str] | None = None) -> int:
+def _existing_header(cache_path: Path) -> list[str]:
+    if not cache_path.exists() or cache_path.stat().st_size == 0:
+        return []
+    with cache_path.open(newline="", encoding="utf-8") as handle:
+        return next(csv.reader(handle), [])
+
+
+def _ensure_schema_unlocked(cache_path: Path) -> dict[str, object]:
+    header = _existing_header(cache_path)
+    if not header:
+        return {
+            "status": "EMPTY",
+            "migrated": False,
+            "rows": 0,
+            "columns": list(INTRADAY_CACHE_COLUMNS),
+        }
+    unknown = [column for column in header if column not in INTRADAY_CACHE_COLUMNS]
+    target = [*INTRADAY_CACHE_COLUMNS, *unknown]
+    if header == target:
+        return {
+            "status": "CURRENT",
+            "migrated": False,
+            "rows": None,
+            "columns": target,
+        }
+    frame = pd.read_csv(cache_path)
+    for column in target:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    frame = frame[target]
+    temporary = cache_path.with_name(f".{cache_path.name}.schema-migrate.tmp")
+    frame.to_csv(temporary, index=False, encoding="utf-8", lineterminator="\n")
+    os.replace(temporary, cache_path)
+    return {
+        "status": "MIGRATED",
+        "migrated": True,
+        "rows": int(len(frame)),
+        "columns": target,
+        "previous_columns": header,
+    }
+
+
+def ensure_intraday_feature_cache_schema(
+    path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    cache_path = Path(path or default_intraday_feature_cache_path())
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = cache_path.with_suffix(cache_path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _ensure_schema_unlocked(cache_path)
+
+
+def append_intraday_feature_rows(
+    contexts: Iterable[Any],
+    path: str | os.PathLike[str] | None = None,
+    *,
+    dedupe_keys: tuple[str, ...] | None = None,
+) -> int:
     rows = [intraday_context_to_feature_row(ctx) for ctx in contexts]
     rows = [row for row in rows if row.get("ticker")]
     if not rows:
         return 0
     cache_path = Path(path or default_intraday_feature_cache_path())
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame(rows)
-    for col in INTRADAY_CACHE_COLUMNS:
-        if col not in df.columns:
-            df[col] = pd.NA
-    df = df[INTRADAY_CACHE_COLUMNS]
-    write_header = not cache_path.exists() or cache_path.stat().st_size == 0
-    df.to_csv(cache_path, mode="a", header=write_header, index=False, encoding="utf-8")
+    lock_path = cache_path.with_suffix(cache_path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        schema = _ensure_schema_unlocked(cache_path)
+        target_columns = list(schema["columns"])
+        df = pd.DataFrame(rows)
+        if dedupe_keys and cache_path.exists() and cache_path.stat().st_size:
+            valid_keys = [
+                key
+                for key in dedupe_keys
+                if key in df.columns and key in target_columns
+            ]
+            if valid_keys:
+                existing = pd.read_csv(
+                    cache_path,
+                    usecols=valid_keys,
+                    dtype=str,
+                ).fillna("")
+                existing_keys = set(
+                    map(tuple, existing[valid_keys].astype(str).to_numpy())
+                )
+                candidate_keys = df[valid_keys].fillna("").astype(str)
+                keep = [
+                    tuple(values) not in existing_keys
+                    for values in candidate_keys.to_numpy()
+                ]
+                df = df.loc[keep].copy()
+                if df.empty:
+                    return 0
+        for col in target_columns:
+            if col not in df.columns:
+                df[col] = pd.NA
+        df = df[target_columns]
+        write_header = not cache_path.exists() or cache_path.stat().st_size == 0
+        df.to_csv(
+            cache_path,
+            mode="a",
+            header=write_header,
+            index=False,
+            encoding="utf-8",
+            lineterminator="\n",
+        )
     return int(len(df))
 
 

@@ -1,9 +1,9 @@
 [Unit]
-Description=Run Phoenix Quant automatic validation cycle hourly
+Description=Run Phoenix Quant automatic validation cycle Weekly on Sunday
 
 [Timer]
-OnCalendar=hourly
-Persistent=true
+OnCalendar=Sun *-*-* 02:00:00 Asia/Seoul
+Persistent=false
 RandomizedDelaySec=5m
 Unit=phoenix-auto-cycle.service
 
