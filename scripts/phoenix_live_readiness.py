@@ -6,7 +6,8 @@ remaining evidence required by ``config/paper_trading.yaml``.
 """
 from __future__ import annotations
 
-import argparse, json, sys
+import argparse, json, subprocess, sys
+from datetime import datetime, timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -18,6 +19,7 @@ except Exception:  # pragma: no cover
     yaml = None
 
 from scripts.phoenix_paper_pnl_report import run as paper_pnl
+from phoenix_core.trade.execution_interlock import validate_review_approval
 
 
 DEFAULT_KILL_SWITCH_EVIDENCE = (
@@ -45,6 +47,11 @@ DEFAULT_SHADOW_EXECUTION_EVIDENCE = (
     "reports/paper_trading/shadow_ledger/"
     "shadow_portfolio_latest.json"
 )
+DEFAULT_INTERLOCK_EVIDENCE = (
+    "reports/paper_trading/interlock/"
+    "execution_interlock_validation_latest.json"
+)
+DEFAULT_MANUAL_APPROVAL = "data/approvals/live_review_approval.json"
 
 
 def _config(path: str) -> dict:
@@ -259,6 +266,56 @@ def _shadow_execution_evidence(
     )
 
 
+def _interlock_evidence(path: str) -> tuple[bool, str]:
+    evidence_path = Path(path)
+    if not evidence_path.exists():
+        return False, "not evidenced"
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, "invalid evidence"
+    checks = evidence.get("checks", {})
+    safe = (
+        evidence.get("status") == "PASS"
+        and bool(checks)
+        and all(value is True for value in checks.values())
+        and evidence.get("approval_artifact_created") is False
+        and evidence.get("kill_switch_disarmed") is False
+        and evidence.get("broker_routes_called") is False
+        and evidence.get("account_endpoints_called") is False
+        and evidence.get("order_endpoints_called") is False
+        and evidence.get("live_enabled") is False
+    )
+    return safe, str(evidence.get("validated_at_utc", "invalid evidence"))
+
+
+def _current_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _manual_approval_evidence(path: str) -> tuple[bool, str]:
+    commit = _current_commit()
+    if not commit:
+        return False, "git commit unavailable"
+    passed, reasons, approval = validate_review_approval(
+        path,
+        expected_commit=commit,
+        now=datetime.now(timezone.utc),
+    )
+    value = (
+        f"operator={approval.get('operator')},commit={commit[:12]}"
+        if passed
+        else ",".join(reasons)
+    )
+    return passed, value
+
+
 def audit(*, cache: str = "data/intraday_features.csv",
           config_path: str = "config/paper_trading.yaml",
           pnl_path: str | None = None,
@@ -268,7 +325,9 @@ def audit(*, cache: str = "data/intraday_features.csv",
           portfolio_risk_evidence: str = DEFAULT_PORTFOLIO_RISK_EVIDENCE,
           calibration_evidence: str = DEFAULT_CALIBRATION_EVIDENCE,
           shadow_control_evidence: str = DEFAULT_SHADOW_CONTROL_EVIDENCE,
-          shadow_execution_evidence: str = DEFAULT_SHADOW_EXECUTION_EVIDENCE) -> dict:
+          shadow_execution_evidence: str = DEFAULT_SHADOW_EXECUTION_EVIDENCE,
+          interlock_evidence: str = DEFAULT_INTERLOCK_EVIDENCE,
+          manual_approval: str = DEFAULT_MANUAL_APPROVAL) -> dict:
     cfg = _config(config_path)
     gates = cfg.get("promotion_gates", {}).get("live_review", {})
     pnl = json.loads(Path(pnl_path).read_text(encoding="utf-8")) if pnl_path else paper_pnl(cache)
@@ -334,6 +393,12 @@ def audit(*, cache: str = "data/intraday_features.csv",
             maximum_quote_rejection_rate=maximum_quote_rejection,
         )
     )
+    interlock_passed, interlock_value = _interlock_evidence(
+        interlock_evidence
+    )
+    manual_approval_passed, manual_approval_value = (
+        _manual_approval_evidence(manual_approval)
+    )
     checks = {
         "mature_trades": (mature >= int(gates.get("min_mature_trades", 500)), mature, gates.get("min_mature_trades", 500)),
         "observed_days": (days >= float(gates.get("min_days", 60)), round(days, 2), gates.get("min_days", 60)),
@@ -348,7 +413,11 @@ def audit(*, cache: str = "data/intraday_features.csv",
             base_oos_value,
             "frozen prospective identical-window ablation",
         ),
-        "manual_signoff": (False, "not granted", "required"),
+        "manual_signoff": (
+            manual_approval_passed,
+            manual_approval_value,
+            "owner-only, <=24h, exact-commit LIVE_REVIEW_ONLY approval",
+        ),
         "kill_switch_test": (
             kill_switch_passed,
             kill_switch_value,
@@ -380,9 +449,16 @@ def audit(*, cache: str = "data/intraday_features.csv",
                 f"quote reject<={maximum_quote_rejection:.0%}"
             ),
         ),
+        "durable_execution_interlock": (
+            interlock_passed,
+            interlock_value,
+            "fail-closed persistent review interlock validation",
+        ),
     }
     reasons = [f"{k}: {v[1]} (need {v[2]})" for k, v in checks.items() if not v[0]]
-    return {"status": "LIVE_BLOCKED", "live_enabled": False, "broker_enabled": False,
+    ready = all(value[0] for value in checks.values())
+    return {"status": "LIVE_REVIEW_READY" if ready else "LIVE_BLOCKED",
+            "live_enabled": False, "broker_enabled": False,
             "best_horizon": best, "observed_days": round(days, 2),
             "kill_switch_evidence": kill_switch_evidence,
             "regime_evidence": regime_evidence,
@@ -391,6 +467,8 @@ def audit(*, cache: str = "data/intraday_features.csv",
             "calibration_evidence": calibration_evidence,
             "shadow_control_evidence": shadow_control_evidence,
             "shadow_execution_evidence": shadow_execution_evidence,
+            "interlock_evidence": interlock_evidence,
+            "manual_approval": manual_approval,
             "checks": {k: {"passed": v[0], "value": v[1], "requirement": v[2]} for k, v in checks.items()},
             "blocking_reasons": reasons}
 
@@ -428,6 +506,14 @@ def main() -> None:
         "--shadow-execution-evidence",
         default=DEFAULT_SHADOW_EXECUTION_EVIDENCE,
     )
+    ap.add_argument(
+        "--interlock-evidence",
+        default=DEFAULT_INTERLOCK_EVIDENCE,
+    )
+    ap.add_argument(
+        "--manual-approval",
+        default=DEFAULT_MANUAL_APPROVAL,
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     out = audit(
@@ -441,6 +527,8 @@ def main() -> None:
         calibration_evidence=args.calibration_evidence,
         shadow_control_evidence=args.shadow_control_evidence,
         shadow_execution_evidence=args.shadow_execution_evidence,
+        interlock_evidence=args.interlock_evidence,
+        manual_approval=args.manual_approval,
     )
     print(json.dumps(out, ensure_ascii=False) if args.json else f"{out['status']}: " + "; ".join(out["blocking_reasons"]))
 

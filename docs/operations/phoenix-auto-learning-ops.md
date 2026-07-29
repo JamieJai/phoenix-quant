@@ -238,6 +238,12 @@ features or use it to retrain the Champion. Live review remains blocked until
 the frozen sample, duration, net-return, drawdown, quote-rejection, calibration,
 regime, and manual-approval gates all pass.
 
+`DURABLE_EXECUTION_INTERLOCK_V1` additionally requires an owner-only,
+time-limited approval artifact tied to the exact Git commit before the status
+can become `LIVE_REVIEW_READY`. This approval is review-only and explicitly
+does not authorize broker orders. Phoenix never creates this artifact
+automatically.
+
 ## Next Improvement Loop
 
 1. Collect feedback for recent Telegram `/top` candidates.

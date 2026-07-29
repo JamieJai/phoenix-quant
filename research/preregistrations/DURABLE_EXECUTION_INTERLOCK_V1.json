@@ -1,0 +1,41 @@
+{
+  "control_id": "DURABLE_EXECUTION_INTERLOCK_V1",
+  "status": "FROZEN_FAIL_CLOSED_CONTROL_CONTRACT",
+  "frozen_at_utc": "2026-07-29T02:35:00Z",
+  "scope": "LIVE_REVIEW_AUTHORIZATION_ONLY",
+  "approval_contract": {
+    "artifact_required": true,
+    "status": "APPROVED",
+    "scope": "LIVE_REVIEW_ONLY",
+    "operator_required": true,
+    "exact_git_commit_required": true,
+    "timezone_aware_expiry_required": true,
+    "maximum_validity_hours": 24,
+    "owner_only_file_permissions_required": true,
+    "broker_orders_authorized": false
+  },
+  "kill_switch_contract": {
+    "sentinel_present": "BLOCK",
+    "sentinel_unreadable": "BLOCK",
+    "approval_cannot_override_kill_switch": true,
+    "restart_persistence_required": true
+  },
+  "readiness_contract": {
+    "required_status": "LIVE_REVIEW_READY",
+    "live_enabled_must_remain_false": true,
+    "broker_enabled_must_remain_false": true
+  },
+  "outcomes": {
+    "missing_or_invalid_input": "BLOCKED",
+    "valid_review_only_input": "REVIEW_ALLOWED",
+    "broker_execution": "UNSUPPORTED_AND_BLOCKED"
+  },
+  "safety": {
+    "approval_artifact_created_automatically": false,
+    "kill_switch_disarmed_automatically": false,
+    "broker_adapter_present": false,
+    "account_or_order_api_allowed": false,
+    "champion_changed": false,
+    "production_score_changed": false
+  }
+}

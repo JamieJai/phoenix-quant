@@ -82,6 +82,11 @@ def main() -> int:
             "scripts/phoenix_shadow_portfolio_status.py",
             "--json",
         ],
+        "execution_interlock_validation": [
+            PYTHON,
+            "scripts/phoenix_execution_interlock_validation.py",
+            "--json",
+        ],
         "live_readiness": [
             PYTHON,
             "scripts/phoenix_live_readiness.py",
